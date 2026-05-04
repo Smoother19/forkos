@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # forkOS
 
 Un fork d'Arch Linux centré sur deux idées :
@@ -32,19 +31,3 @@ Un fork d'Arch Linux centré sur deux idées :
 - **Compositor** : niri (fork ou config custom)
 - **Shell graphique** : Rust + iced + smithay-client-toolkit
 - **Recherche** : nucleo (fuzzy matching)
-
-## Démarrage rapide (dev)
-
-\`\`\`bash
-git clone https://github.com/tonuser/forkos
-cd forkos/crates
-cargo build
-\`\`\`
-
-## Licence
-
-GPL-3.0
-=======
-# forkos
-Own fork of arch linux
->>>>>>> 1cb09cfe2bb2880c267bf48349ddbae4c2ea4163
