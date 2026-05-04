@@ -1,0 +1,29 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Note: on garde Cargo.lock pour les binaires (recommandé)
+# Décommente la ligne ci-dessus seulement si tu fais une lib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.iso
+*.img
+*.qcow2
+build/
+dist/
+
+# Secrets
+.env
+*.key
+*.pem
