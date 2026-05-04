@@ -1,6 +1,11 @@
 mod app;
+mod calculator;
 mod command;
+mod grep;
+mod mode;
 mod search;
+mod shell;
+mod sources;
 mod theme;
 mod view;
 
@@ -12,5 +17,6 @@ fn main() -> iced::Result {
     iced::application("Palette", Palette::update, Palette::view)
         .subscription(Palette::subscription)
         .theme(|_| iced::Theme::Light)
+        .decorations(false)
         .run_with(Palette::new)
 }
