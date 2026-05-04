@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # forkOS
 
 Un fork d'Arch Linux centré sur deux idées :
@@ -43,3 +44,7 @@ cargo build
 ## Licence
 
 GPL-3.0
+=======
+# forkos
+Own fork of arch linux
+>>>>>>> 1cb09cfe2bb2880c267bf48349ddbae4c2ea4163
