@@ -54,9 +54,11 @@ impl Palette {
                 if let Some(cmd) = self.selected_command() {
                     println!("→ exécuter: {}", cmd.name);
                 }
-                Task::none()
+                std::process::exit(0);
             }
-            Message::Quit => iced::exit(),
+            Message::Quit => {
+                std::process::exit(0);
+            }
         }
     }
 
