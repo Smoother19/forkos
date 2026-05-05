@@ -5,13 +5,6 @@ use nucleo::{Config, Matcher, Utf32Str};
 
 /// Retourne les commandes filtrées selon le mode et le query effectif.
 pub fn filter_and_sort<'a>(commands: &'a [Command], mode: Mode, query: &str) -> Vec<&'a Command> {
-    let pool: &[Command];
-
-    // En mode commandes pures (>), on utilise system_commands à la place
-    // On ne peut pas les stocker dans commands (lifetimes), donc on les filtre à part
-    // via une version statique — voir note ci-dessous.
-    // Pour l'instant on utilise le pool passé en paramètre avec un filtre de section.
-
     let mode_filtered: Vec<&Command> = commands
         .iter()
         .filter(|cmd| match mode {
