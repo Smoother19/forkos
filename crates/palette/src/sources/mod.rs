@@ -1,6 +1,9 @@
+pub mod contacts;
 pub mod desktop;
+pub mod icons;
 pub mod path_cmds;
 pub mod recent;
+pub mod tags;
 
 use crate::command::{Command, Section};
 
@@ -24,16 +27,15 @@ fn load_blocking() -> LoadedSources {
 
     // ── Apps depuis les fichiers .desktop ──────────────────────────────────
     for app in desktop::scan() {
-        let (icon, section) = if app.is_flatpak {
-            ("⬡", Section::Apps)
-        } else {
-            ("⬢", Section::Apps)
-        };
+        let icon_path = icons::resolve(&app.icon_name)
+            .map(|p| p.to_string_lossy().into_owned());
+        let icon = if app.is_flatpak { "⬡" } else { "⬢" };
         commands.push(Command {
             name: app.name,
             description: app.description,
-            section,
+            section: Section::Apps,
             icon: icon.to_string(),
+            icon_path,
             shortcut: "↵".to_string(),
             exec: Some(app.exec),
         });
@@ -46,8 +48,47 @@ fn load_blocking() -> LoadedSources {
             description: format!("modifié {} · {}", file.modified, shorten_path(&file.path)),
             section: Section::Files,
             icon: icon_for_file(&file.name),
+            icon_path: None,
             shortcut: "↵".to_string(),
             exec: Some(format!("xdg-open \"{}\"", file.path)),
+        });
+    }
+
+    // ── Contacts (@) ──────────────────────────────────────────────────────
+    for contact in contacts::load() {
+        let description = build_contact_description(&contact);
+        let exec = contact.email.as_ref().map(|e| format!("mailto:{}", e));
+        commands.push(Command {
+            name: contact.name,
+            description,
+            section: Section::Contacts,
+            icon: "◎".to_string(),
+            icon_path: None,
+            shortcut: "↵".to_string(),
+            exec,
+        });
+    }
+
+    // ── Notes / Tags (#) ──────────────────────────────────────────────────
+    for note in tags::load_notes() {
+        let tag_display = if note.tags.is_empty() {
+            note.preview.clone()
+        } else {
+            let tag_str = note.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ");
+            if note.preview.is_empty() {
+                tag_str
+            } else {
+                format!("{} — {}", tag_str, note.preview)
+            }
+        };
+        commands.push(Command {
+            name: note.title,
+            description: tag_display,
+            section: Section::Tags,
+            icon: "▤".to_string(),
+            icon_path: None,
+            shortcut: "↵".to_string(),
+            exec: Some(format!("xdg-open \"{}\"", note.path)),
         });
     }
 
@@ -55,6 +96,20 @@ fn load_blocking() -> LoadedSources {
     let path_commands = path_cmds::scan();
 
     LoadedSources { commands, path_commands }
+}
+
+fn build_contact_description(contact: &contacts::Contact) -> String {
+    let mut parts = Vec::new();
+    if let Some(org) = &contact.org {
+        parts.push(org.clone());
+    }
+    if let Some(email) = &contact.email {
+        parts.push(email.clone());
+    }
+    if let Some(phone) = &contact.phone {
+        parts.push(phone.clone());
+    }
+    parts.join(" · ")
 }
 
 fn icon_for_file(name: &str) -> String {

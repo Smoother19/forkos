@@ -5,8 +5,10 @@ use crate::grep::GrepMatch;
 use crate::mode::Mode;
 use crate::shell::ShellEntry;
 use crate::theme;
+use iced::widget::image as img;
+use iced::widget::svg;
 use iced::widget::{column, container, row, text, Space};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
+use iced::{Alignment, Background, Border, Color, ContentFit, Element, Length, Padding};
 
 pub fn render(state: &Palette) -> Element<'_, Message> {
     let mode = state.mode();
@@ -16,8 +18,8 @@ pub fn render(state: &Palette) -> Element<'_, Message> {
         Mode::Shell => render_shell(state),
         Mode::Calculator => render_calculator(eq),
         Mode::Web => render_web(eq),
-        Mode::Contacts => render_stub("@", "contacts", "Annuaire non encore connecté."),
-        Mode::Tags => render_stub("#", "tags", "Index des notes non encore connecté."),
+        Mode::Contacts => render_contacts(state),
+        Mode::Tags => render_tags(state),
         Mode::FileContent => render_grep(state),
         Mode::Universal | Mode::Commands => render_commands(state),
     }
@@ -57,13 +59,22 @@ fn section_header(label: &str) -> Element<'_, Message> {
         .into()
 }
 
-fn command_row<'a>(
-    cmd: &'a Command,
-    selected: bool,
-    query: &str,
-    index: usize,
-) -> Element<'a, Message> {
-    let icon_box = container(text(cmd.icon.clone()).size(14).color(cmd.section.icon_color()))
+fn icon_box<'a>(cmd: &'a Command) -> Element<'a, Message> {
+    let inner: Element<'a, Message> = match &cmd.icon_path {
+        Some(path) if path.ends_with(".svg") => svg::Svg::new(svg::Handle::from_path(path))
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .content_fit(ContentFit::Contain)
+            .into(),
+        Some(path) => img::Image::new(img::Handle::from_path(path))
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .content_fit(ContentFit::Contain)
+            .into(),
+        None => text(cmd.icon.clone()).size(14).color(cmd.section.icon_color()).into(),
+    };
+
+    container(inner)
         .width(Length::Fixed(32.0))
         .height(Length::Fixed(32.0))
         .center_x(Length::Fixed(32.0))
@@ -72,7 +83,17 @@ fn command_row<'a>(
             background: Some(Background::Color(theme::OVERLAY)),
             border: Border { color: Color::TRANSPARENT, width: 0.0, radius: 4.0.into() },
             ..Default::default()
-        });
+        })
+        .into()
+}
+
+fn command_row<'a>(
+    cmd: &'a Command,
+    selected: bool,
+    query: &str,
+    index: usize,
+) -> Element<'a, Message> {
+    let icon_box = icon_box(cmd);
 
     let info = column![
         highlighted_text(&cmd.name, query, 13.0, theme::TEXT),
@@ -277,10 +298,34 @@ fn grep_match_row(m: &GrepMatch, selected: bool) -> Element<'static, Message> {
         .into()
 }
 
-// ── Mode stub (@ contacts, # tags) ────────────────────────────────────────────
+// ── Mode Contacts (@) ──────────────────────────────────────────────────────────
 
-fn render_stub(prefix: &str, name: &str, msg: &str) -> Element<'static, Message> {
-    empty_state(format!("{} {} — {}", prefix, name, msg))
+fn render_contacts(state: &Palette) -> Element<'_, Message> {
+    if state.is_loading {
+        return empty_state("Chargement des contacts…");
+    }
+    let visible = state.visible_commands();
+    if visible.is_empty() {
+        return empty_state(
+            "Aucun contact — place des fichiers .vcf dans ~/contacts/ ou ~/.local/share/gnome-contacts/",
+        );
+    }
+    render_commands(state)
+}
+
+// ── Mode Tags (#) ──────────────────────────────────────────────────────────────
+
+fn render_tags(state: &Palette) -> Element<'_, Message> {
+    if state.is_loading {
+        return empty_state("Chargement des notes…");
+    }
+    let visible = state.visible_commands();
+    if visible.is_empty() {
+        return empty_state(
+            "Aucune note — place tes fichiers .md/.txt dans ~/notes/ ou ~/Documents/notes/",
+        );
+    }
+    render_commands(state)
 }
 
 // ── Utilitaires ────────────────────────────────────────────────────────────────

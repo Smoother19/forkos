@@ -10,12 +10,17 @@ pub fn filter_and_sort<'a>(commands: &'a [Command], mode: Mode, query: &str) -> 
         .filter(|cmd| match mode {
             Mode::Universal => !matches!(
                 cmd.section,
-                crate::command::Section::System | crate::command::Section::Settings
+                crate::command::Section::System
+                    | crate::command::Section::Settings
+                    | crate::command::Section::Contacts
+                    | crate::command::Section::Tags
             ),
             Mode::Commands => matches!(
                 cmd.section,
                 crate::command::Section::System | crate::command::Section::Settings
             ),
+            Mode::Contacts => matches!(cmd.section, crate::command::Section::Contacts),
+            Mode::Tags => matches!(cmd.section, crate::command::Section::Tags),
             // Les autres modes n'utilisent pas ce pool de commandes
             _ => false,
         })

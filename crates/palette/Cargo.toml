@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-iced = { version = "0.13", features = ["tokio"] }
+iced = { version = "0.13", features = ["tokio", "image", "svg"] }
 nucleo = "0.5"
 tokio = { workspace = true }
 anyhow = { workspace = true }

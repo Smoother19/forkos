@@ -7,6 +7,9 @@ pub struct Command {
     pub description: String,
     pub section: Section,
     pub icon: String,
+    /// Chemin absolu vers une icône PNG/SVG résolue depuis le thème freedesktop.
+    /// None = on utilise le champ `icon` (emoji) comme fallback.
+    pub icon_path: Option<String>,
     pub shortcut: String,
     /// Commande à exécuter quand l'entrée est sélectionnée.
     /// None = commande de démo sans action réelle.
@@ -22,6 +25,8 @@ pub enum Section {
     Files,
     System,
     Settings,
+    Contacts,
+    Tags,
 }
 
 impl Section {
@@ -33,6 +38,8 @@ impl Section {
             Section::Files => "FICHIERS RÉCENTS",
             Section::System => "SYSTÈME",
             Section::Settings => "PARAMÈTRES",
+            Section::Contacts => "CONTACTS",
+            Section::Tags => "NOTES",
         }
     }
 
@@ -44,6 +51,8 @@ impl Section {
             Section::Apps => 3,
             Section::System => 4,
             Section::Settings => 5,
+            Section::Contacts => 6,
+            Section::Tags => 7,
         }
     }
 
@@ -55,6 +64,8 @@ impl Section {
             Section::Files => theme::IRIS,
             Section::System => theme::PINE,
             Section::Settings => theme::GOLD,
+            Section::Contacts => theme::LOVE,
+            Section::Tags => theme::ROSE,
         }
     }
 }
@@ -67,6 +78,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "ouvrir Nautilus".into(),
             section: Section::System,
             icon: "📁".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("nautilus".into()),
         },
@@ -75,6 +87,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "ouvrir un terminal".into(),
             section: Section::System,
             icon: "⬛".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("xterm".into()),
         },
@@ -83,6 +96,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "ouvrir Helix / Gedit".into(),
             section: Section::System,
             icon: "✏".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("helix".into()),
         },
@@ -91,6 +105,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "ouvrir Firefox".into(),
             section: Section::System,
             icon: "🌐".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("firefox".into()),
         },
@@ -99,6 +114,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "ouvrir GNOME Settings".into(),
             section: Section::Settings,
             icon: "⚙".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("gnome-control-center".into()),
         },
@@ -107,6 +123,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "gérer les appareils bluetooth".into(),
             section: Section::Settings,
             icon: "⟡".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("gnome-control-center bluetooth".into()),
         },
@@ -115,6 +132,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "gérer les connexions réseau".into(),
             section: Section::Settings,
             icon: "⋯".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("gnome-control-center network".into()),
         },
@@ -123,6 +141,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "verrouille la session immédiatement".into(),
             section: Section::System,
             icon: "🔒".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("loginctl lock-session".into()),
         },
@@ -131,6 +150,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "arrêter le système".into(),
             section: Section::System,
             icon: "⏻".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("systemctl poweroff".into()),
         },
@@ -139,6 +159,7 @@ pub fn system_commands() -> Vec<Command> {
             description: "redémarrer le système".into(),
             section: Section::System,
             icon: "↺".into(),
+            icon_path: None,
             shortcut: "↵".into(),
             exec: Some("systemctl reboot".into()),
         },

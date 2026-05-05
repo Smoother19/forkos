@@ -6,6 +6,7 @@ pub struct DesktopApp {
     pub name: String,
     pub description: String,
     pub exec: String,
+    pub icon_name: String,
     pub is_flatpak: bool,
 }
 
@@ -88,6 +89,7 @@ fn parse_desktop_file(path: &Path) -> Option<DesktopApp> {
         .or_else(|| fields.get("Comment"))
         .cloned()
         .unwrap_or_default();
+    let icon_name = fields.get("Icon").cloned().unwrap_or_default();
 
     let is_flatpak = path
         .to_str()
@@ -98,6 +100,7 @@ fn parse_desktop_file(path: &Path) -> Option<DesktopApp> {
         name,
         description,
         exec: clean_exec(&exec),
+        icon_name,
         is_flatpak,
     })
 }

@@ -158,11 +158,20 @@ impl Palette {
                 }
 
                 _ => {
-                    // Mode Universal ou Commands — exécute la commande sélectionnée
+                    // Mode Universal, Commands, Contacts, Tags, FileContent
                     match self.selected_command().and_then(|c| c.exec.clone()) {
                         Some(exec_cmd) => {
                             tracing::info!("executing selected command: {}", exec_cmd);
-                            spawn_exec(&exec_cmd);
+                            // Les URI (mailto:, https:, http:) s'ouvrent via open_url
+                            // qui gère les fallbacks WSL (wslview, explorer.exe)
+                            if exec_cmd.starts_with("mailto:")
+                                || exec_cmd.starts_with("https://")
+                                || exec_cmd.starts_with("http://")
+                            {
+                                open_url(&exec_cmd);
+                            } else {
+                                spawn_exec(&exec_cmd);
+                            }
                         }
                         None => {
                             tracing::warn!(
@@ -171,11 +180,6 @@ impl Palette {
                                 self.mode(),
                                 self.selected,
                                 self.visible_count(),
-                            );
-                            eprintln!(
-                                "[palette] aucune commande à exécuter (selected={}, visible={})",
-                                self.selected,
-                                self.visible_count()
                             );
                         }
                     }
