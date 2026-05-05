@@ -40,7 +40,12 @@ fn render_commands(state: &Palette) -> Element<'_, Message> {
             col = col.push(section_header(cmd.section.label()));
             current_section = Some(cmd.section);
         }
-        col = col.push(command_row(cmd, index == state.selected, state.effective_query()));
+        col = col.push(command_row(
+            cmd,
+            index == state.selected,
+            state.effective_query(),
+            index,
+        ));
     }
 
     col.into()
@@ -52,7 +57,12 @@ fn section_header(label: &str) -> Element<'_, Message> {
         .into()
 }
 
-fn command_row<'a>(cmd: &'a Command, selected: bool, query: &str) -> Element<'a, Message> {
+fn command_row<'a>(
+    cmd: &'a Command,
+    selected: bool,
+    query: &str,
+    index: usize,
+) -> Element<'a, Message> {
     let icon_box = container(text(cmd.icon.clone()).size(14).color(cmd.section.icon_color()))
         .width(Length::Fixed(32.0))
         .height(Length::Fixed(32.0))
@@ -71,11 +81,17 @@ fn command_row<'a>(cmd: &'a Command, selected: bool, query: &str) -> Element<'a,
     .spacing(2);
 
     let shortcut_color = if selected { theme::LOVE } else { theme::MUTED };
+    // Pour les 9 premiers résultats, on affiche ⌘N à la place du raccourci générique
+    let shortcut_label = if index < 9 {
+        format!("⌘{}", index + 1)
+    } else {
+        cmd.shortcut.clone()
+    };
     let line = row![
         icon_box,
         info,
         Space::new(Length::Fill, Length::Shrink),
-        text(cmd.shortcut.clone()).size(10).color(shortcut_color),
+        text(shortcut_label).size(10).color(shortcut_color),
     ]
     .spacing(14)
     .align_y(Alignment::Center)

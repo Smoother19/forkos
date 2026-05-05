@@ -30,6 +30,10 @@ pub enum Message {
     SelectPrevious,
     Execute,
     Quit,
+    /// ⌘1..9 — sélectionne le résultat à l'index donné puis exécute.
+    SelectAndExecute(usize),
+    /// Tab en mode shell — autocomplète depuis `path_commands`.
+    ShellAutocomplete,
     // Sources chargées au démarrage
     SourcesLoaded(sources::LoadedSources),
     // Résultats async
@@ -201,6 +205,38 @@ impl Palette {
                 self.grep_loading = false;
                 Task::none()
             }
+
+            Message::SelectAndExecute(idx) => {
+                if idx < self.visible_count() {
+                    self.selected = idx;
+                    return self.update(Message::Execute);
+                }
+                tracing::debug!("SelectAndExecute({}) ignoré (visible_count={})", idx, self.visible_count());
+                Task::none()
+            }
+
+            Message::ShellAutocomplete => {
+                if self.mode() != Mode::Shell {
+                    return Task::none();
+                }
+                let prefix = self.effective_query().to_string();
+                // On n'autocomplète que le premier mot (pas les arguments)
+                if prefix.is_empty() || prefix.contains(' ') {
+                    return Task::none();
+                }
+                if let Some(matched) = self
+                    .path_commands
+                    .iter()
+                    .find(|c| c.starts_with(&prefix))
+                    .cloned()
+                {
+                    tracing::info!("autocomplete: {} → {}", prefix, matched);
+                    self.query = format!("$ {}", matched);
+                } else {
+                    tracing::debug!("autocomplete: aucun match pour '{}'", prefix);
+                }
+                Task::none()
+            }
         }
     }
 
@@ -209,11 +245,19 @@ impl Palette {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        keyboard::on_key_press(|key, _modifiers| match key {
+        keyboard::on_key_press(|key, modifiers| match key {
             keyboard::Key::Named(key::Named::ArrowDown) => Some(Message::SelectNext),
             keyboard::Key::Named(key::Named::ArrowUp) => Some(Message::SelectPrevious),
             keyboard::Key::Named(key::Named::Enter) => Some(Message::Execute),
             keyboard::Key::Named(key::Named::Escape) => Some(Message::Quit),
+            keyboard::Key::Named(key::Named::Tab) => Some(Message::ShellAutocomplete),
+            // ⌘1..9 (Cmd sur Mac, Ctrl sur Linux/Win) — saut direct sur un résultat
+            keyboard::Key::Character(c) if modifiers.command() => c
+                .as_str()
+                .parse::<usize>()
+                .ok()
+                .filter(|i| (1..=9).contains(i))
+                .map(|i| Message::SelectAndExecute(i - 1)),
             _ => None,
         })
     }

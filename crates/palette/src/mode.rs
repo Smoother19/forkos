@@ -72,9 +72,9 @@ impl Mode {
     /// Conseil affiché dans le footer selon le mode.
     pub fn hint(&self) -> &'static str {
         match self {
-            Mode::Universal => "tape > commandes  $ shell  ? web  : calcul",
-            Mode::Commands => "> commandes  ↑↓ naviguer  ↵ exécuter",
-            Mode::Shell => "↵ exécuter  ↑↓ historique  esc quitter",
+            Mode::Universal => "↑↓ naviguer  ⌘1..9 saut direct  ↵ exécuter  > $ ? : @ # /",
+            Mode::Commands => "> commandes  ⌘1..9 saut  ↑↓ naviguer  ↵ exécuter",
+            Mode::Shell => "↵ exécuter  ⇥ autocomplète  ↑↓ historique  esc quitter",
             Mode::Web => "↵ ouvrir DuckDuckGo  esc quitter",
             Mode::Calculator => "résultat en temps réel  ↵ copier",
             Mode::Contacts => "↑↓ naviguer  ↵ ouvrir  esc quitter",
