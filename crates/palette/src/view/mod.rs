@@ -39,14 +39,11 @@ pub fn render(state: &Palette) -> Element<'_, Message> {
             ..Default::default()
         });
 
-    // Backdrop Rose Pine Moon (#232136) à 72% — laisse voir l'app en dessous
-    let backdrop = Color { r: 0.137, g: 0.129, b: 0.212, a: 0.72 };
-
     container(palette_box)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(backdrop)),
+        .style(|_| container::Style {
+            background: Some(Background::Color(Color::TRANSPARENT)),
             ..Default::default()
         })
         .into()
