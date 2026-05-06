@@ -12,6 +12,7 @@ use iced::{Element, Subscription, Task};
 pub struct Palette {
     pub query: String,
     pub commands: Vec<Command>,
+    pub filtered: Vec<Command>,
     pub selected: usize,
     pub is_loading: bool,
     // Shell
@@ -40,10 +41,13 @@ pub enum Message {
 
 impl Default for Palette {
     fn default() -> Self {
+        let commands = system_commands();
+        let filtered = search::filter_and_sort(&commands, Mode::Universal, "");
         Self {
             query: String::new(),
             selected: 0,
-            commands: system_commands(),
+            commands,
+            filtered,
             is_loading: true,
             shell_history: Vec::new(),
             shell_history_nav: None,
@@ -78,24 +82,35 @@ impl Palette {
                 self.shell_history_nav = None;
 
                 let new_mode = self.mode();
-                let eq = self.effective_query().to_string();
+                let mode_changed = old_mode != new_mode;
 
+                if mode_changed {
+                    self.grep_results.clear();
+                    self.grep_loading = false;
+                }
+
+                self.recompute_filtered();
+
+                let eq = self.effective_query().to_string();
                 if new_mode == Mode::FileContent && !eq.is_empty() {
                     self.grep_loading = true;
                     let search_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                    return Task::perform(
+                    let grep_task = Task::perform(
                         crate::grep::search(eq, search_dir),
                         Message::GrepCompleted,
                     );
+                    return if mode_changed {
+                        Task::batch([grep_task, text_input::focus(view::header::INPUT_ID.clone())])
+                    } else {
+                        grep_task
+                    };
                 }
 
-                if old_mode != new_mode {
-                    self.grep_results.clear();
-                    self.grep_loading = false;
-                    return text_input::focus(view::header::INPUT_ID.clone());
+                if mode_changed {
+                    text_input::focus(view::header::INPUT_ID.clone())
+                } else {
+                    Task::none()
                 }
-
-                Task::none()
             }
 
             Message::SelectNext => {
@@ -171,12 +186,12 @@ impl Palette {
             Message::Quit => std::process::exit(0),
 
             Message::SourcesLoaded(sources) => {
-                // On garde les commandes système hardcodées, on ajoute les sources réelles
                 let mut new_commands: Vec<Command> = system_commands();
                 new_commands.extend(sources.commands);
                 self.commands = new_commands;
                 self.path_commands = sources.path_commands;
                 self.is_loading = false;
+                self.recompute_filtered();
                 Task::none()
             }
 
@@ -207,16 +222,22 @@ impl Palette {
         })
     }
 
-    pub fn visible_commands(&self) -> Vec<&Command> {
-        search::filter_and_sort(&self.commands, self.mode(), self.effective_query())
+    pub fn visible_commands(&self) -> &[Command] {
+        &self.filtered
     }
 
     pub fn visible_count(&self) -> usize {
-        self.visible_commands().len()
+        self.filtered.len()
     }
 
     pub fn selected_command(&self) -> Option<&Command> {
-        self.visible_commands().get(self.selected).copied()
+        self.filtered.get(self.selected)
+    }
+
+    fn recompute_filtered(&mut self) {
+        self.filtered = search::filter_and_sort(&self.commands, self.mode(), self.effective_query());
+        let max = self.filtered.len().saturating_sub(1);
+        self.selected = self.selected.min(max);
     }
 
     fn shell_history_up(&mut self) {
