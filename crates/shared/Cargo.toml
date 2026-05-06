@@ -1,9 +1,13 @@
 [package]
-name = "shared"
+name = "forkos-shared"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-repository.workspace = true
 
 [dependencies]
+iced = { version = "0.13", features = ["tokio"] }
+nucleo = "0.5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
