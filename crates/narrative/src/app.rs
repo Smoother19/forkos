@@ -74,7 +74,7 @@ impl Narrative {
                 if text.is_empty() {
                     return Task::none();
                 }
-                let entry = Entry::note(&text);
+                let entry = parse_composer(&text);
                 let insert_result = self.store.lock().unwrap().insert(&entry);
                 if let Err(e) = insert_result {
                     return self.report_error(format!("insert: {}", e));
@@ -299,6 +299,28 @@ fn is_wsl() -> bool {
 
 fn first_word(s: &str) -> &str {
     s.split_whitespace().next().unwrap_or(s)
+}
+
+/// Interprète le texte du composer pour créer l'entrée appropriée.
+///
+/// Syntaxe reconnue :
+///   `[ ] texte`  → Task { done: false }
+///   `[x] texte`  → Task { done: true }
+///   `[X] texte`  → Task { done: true }
+///   *(autre)*    → Note { text }
+fn parse_composer(raw: &str) -> Entry {
+    // Tâche non faite : "[ ] …"
+    if let Some(rest) = raw.strip_prefix("[ ]") {
+        let text = rest.trim().to_string();
+        return Entry::new(Kind::Task, Payload::Task { text, done: false });
+    }
+    // Tâche faite : "[x] …" ou "[X] …"
+    if let Some(rest) = raw.strip_prefix("[x]").or_else(|| raw.strip_prefix("[X]")) {
+        let text = rest.trim().to_string();
+        return Entry::new(Kind::Task, Payload::Task { text, done: true });
+    }
+    // Fallback : note libre
+    Entry::note(raw)
 }
 
 /// Trait pour résultat → Message ergonomique.

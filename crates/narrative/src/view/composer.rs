@@ -6,7 +6,7 @@ use iced::{Background, Border, Color, Element, Length, Padding};
 pub fn render(state: &Narrative) -> Element<'_, Message> {
     let prompt = text("›").size(15).color(theme::ROSE);
 
-    let input = text_input("écris une note, une tâche, ou une pensée…", &state.composer)
+    let input = text_input("note libre  ·  [ ] tâche  ·  [x] fait", &state.composer)
         .on_input(Message::ComposerChanged)
         .on_submit(Message::SubmitComposer)
         .padding(Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 })
