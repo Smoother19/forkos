@@ -18,9 +18,7 @@ input {
         dwt  // disable-while-typing
     }
 
-    mouse {
-        natural-scroll false
-    }
+    mouse {}
 }
 
 // Adapter selon ta VM / ton écran
@@ -107,7 +105,7 @@ binds {
     Mod+Tab { focus-workspace-previous; }
 
     // ── Système ────────────────────────────────────────────────
-    Mod+Shift+R { reload-config; }
+    Mod+Shift+R { spawn "sh" "-c" "niri msg action reload-config"; }
     Mod+Shift+Q { quit; }
 
     // ── Screenshots ────────────────────────────────────────────
