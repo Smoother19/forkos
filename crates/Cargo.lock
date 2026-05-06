@@ -2360,6 +2360,8 @@ dependencies = [
  "anyhow",
  "iced",
  "nucleo",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

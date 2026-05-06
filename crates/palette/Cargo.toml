@@ -9,6 +9,8 @@ license.workspace = true
 iced = { version = "0.13", features = ["tokio"] }
 nucleo = "0.5"
 tokio = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

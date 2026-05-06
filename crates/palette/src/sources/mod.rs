@@ -1,4 +1,5 @@
 pub mod desktop;
+pub mod niri_windows;
 pub mod path_cmds;
 pub mod recent;
 
@@ -21,6 +22,9 @@ pub async fn load_all() -> LoadedSources {
 
 fn load_blocking() -> LoadedSources {
     let mut commands = Vec::new();
+
+    // ── Fenêtres actives (niri IPC) — s'affichent en premier ──────────────
+    commands.extend(niri_windows::load());
 
     // ── Apps depuis les fichiers .desktop ──────────────────────────────────
     for app in desktop::scan() {
