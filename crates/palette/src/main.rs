@@ -16,7 +16,15 @@ fn main() -> iced::Result {
 
     iced::application("Palette", Palette::update, Palette::view)
         .subscription(Palette::subscription)
-        .theme(|_| iced::Theme::Light)
+        .theme(|_| {
+            iced::Theme::custom(
+                "forkos".to_string(),
+                iced::theme::Palette {
+                    background: iced::Color::TRANSPARENT,
+                    ..iced::theme::Palette::LIGHT
+                },
+            )
+        })
         .decorations(false)
         .transparent(true)
         .run_with(Palette::new)
