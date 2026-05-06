@@ -18,5 +18,6 @@ fn main() -> iced::Result {
         .subscription(Palette::subscription)
         .theme(|_| iced::Theme::Light)
         .decorations(false)
+        .transparent(true)
         .run_with(Palette::new)
 }

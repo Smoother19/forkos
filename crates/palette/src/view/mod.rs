@@ -5,7 +5,7 @@ mod results;
 use crate::app::{Message, Palette};
 use crate::theme;
 use iced::widget::{column, container, scrollable, Space};
-use iced::{Background, Border, Element, Length};
+use iced::{Background, Border, Color, Element, Length};
 
 pub fn render(state: &Palette) -> Element<'_, Message> {
     let mode = state.mode();
@@ -30,19 +30,23 @@ pub fn render(state: &Palette) -> Element<'_, Message> {
         footer::render(visible_count, mode, state.is_loading),
     ];
 
-    let palette_box = container(body).max_width(620).style(|_| container::Style {
-        background: Some(Background::Color(theme::SURFACE)),
-        border: Border { color: theme::HIGHLIGHT_MED, width: 1.0, radius: 12.0.into() },
-        ..Default::default()
-    });
+    let palette_box = container(body)
+        .max_width(620)
+        .max_height(520)
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::SURFACE)),
+            border: Border { color: theme::HIGHLIGHT_MED, width: 1.0, radius: 12.0.into() },
+            ..Default::default()
+        });
+
+    // Backdrop Rose Pine Moon (#232136) à 72% — laisse voir l'app en dessous
+    let backdrop = Color { r: 0.137, g: 0.129, b: 0.212, a: 0.72 };
 
     container(palette_box)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(40)
         .center_x(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(theme::BASE)),
+        .center_y(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(backdrop)),
             ..Default::default()
         })
         .into()

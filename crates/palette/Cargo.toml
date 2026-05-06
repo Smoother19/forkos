@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 iced = { version = "0.13", features = ["tokio"] }
 nucleo = "0.5"
+tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

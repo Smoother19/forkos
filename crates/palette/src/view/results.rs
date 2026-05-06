@@ -5,7 +5,7 @@ use crate::grep::GrepMatch;
 use crate::mode::Mode;
 use crate::shell::ShellEntry;
 use crate::theme;
-use iced::widget::{column, container, row, text, Column, Space};
+use iced::widget::{column, container, row, text, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 pub fn render(state: &Palette) -> Element<'_, Message> {
@@ -146,7 +146,7 @@ fn render_calculator(query: &str) -> Element<'_, Message> {
         Some(result) => {
             let result_display = container(
                 column![
-                    text(&result).size(28).color(theme::GOLD),
+                    text(result).size(28).color(theme::GOLD),
                     text("↵ pour copier").size(11).color(theme::MUTED),
                 ]
                 .spacing(6)
@@ -225,11 +225,12 @@ fn render_grep(state: &Palette) -> Element<'_, Message> {
     col.into()
 }
 
-fn grep_match_row(m: &GrepMatch, selected: bool) -> Element<'_, Message> {
+fn grep_match_row(m: &GrepMatch, selected: bool) -> Element<'static, Message> {
     let file_line = format!("{}:{}", m.file, m.line);
+    let content_text = m.content.clone();
     let content = column![
-        text(&file_line).size(11).color(theme::IRIS),
-        text(&m.content).size(12).color(theme::TEXT),
+        text(file_line).size(11).color(theme::IRIS),
+        text(content_text).size(12).color(theme::TEXT),
     ]
     .spacing(2);
 
@@ -263,14 +264,13 @@ fn grep_match_row(m: &GrepMatch, selected: bool) -> Element<'_, Message> {
 // ── Mode stub (@ contacts, # tags) ────────────────────────────────────────────
 
 fn render_stub(prefix: &str, name: &str, msg: &str) -> Element<'static, Message> {
-    let label = format!("{} {} — {}", prefix, name, msg);
-    empty_state(&label)
+    empty_state(format!("{} {} — {}", prefix, name, msg))
 }
 
 // ── Utilitaires ────────────────────────────────────────────────────────────────
 
-fn empty_state(msg: &str) -> Element<'_, Message> {
-    container(text(msg.to_string()).size(13).color(theme::MUTED))
+fn empty_state(msg: impl Into<String>) -> Element<'static, Message> {
+    container(text(msg.into()).size(13).color(theme::MUTED))
         .width(Length::Fill)
         .padding(Padding { top: 28.0, right: 22.0, bottom: 28.0, left: 22.0 })
         .center_x(Length::Fill)
