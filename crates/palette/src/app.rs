@@ -6,6 +6,7 @@ use crate::shell::ShellEntry;
 use crate::sources;
 use crate::view;
 use iced::keyboard::{self, key};
+use iced::widget::text_input;
 use iced::{Element, Subscription, Task};
 
 pub struct Palette {
@@ -56,7 +57,8 @@ impl Default for Palette {
 impl Palette {
     pub fn new() -> (Self, Task<Message>) {
         let load = Task::perform(sources::load_all(), Message::SourcesLoaded);
-        (Self::default(), load)
+        let focus = text_input::focus(view::header::INPUT_ID.clone());
+        (Self::default(), Task::batch([load, focus]))
     }
 
     pub fn mode(&self) -> Mode {
@@ -90,6 +92,7 @@ impl Palette {
                 if old_mode != new_mode {
                     self.grep_results.clear();
                     self.grep_loading = false;
+                    return text_input::focus(view::header::INPUT_ID.clone());
                 }
 
                 Task::none()

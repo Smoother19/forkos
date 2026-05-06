@@ -28,6 +28,7 @@ pub fn render(query: &str, mode: Mode) -> Element<'_, Message> {
         text_input(placeholder, query)
             .id(INPUT_ID.clone())
             .on_input(Message::QueryChanged)
+            .on_submit(Message::Execute)
             .padding(0)
             .size(15)
             .style(|_, _| iced::widget::text_input::Style {
