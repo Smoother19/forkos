@@ -27,6 +27,10 @@ pub fn insert_from_text(raw: &str) -> Result<()> {
     let (kind, payload) = parse(raw);
 
     let path = db_path();
+    // Crée le répertoire parent si nécessaire (première utilisation).
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let conn = rusqlite::Connection::open(&path)?;
 
     // Crée la table si elle n'existe pas encore (cas où narrative n'a jamais tourné).
@@ -40,10 +44,11 @@ pub fn insert_from_text(raw: &str) -> Result<()> {
     )?;
 
     let id = uuid::Uuid::new_v4().to_string();
+    // narrative/storage.rs stocke en secondes Unix (timestamp_opt(ts, 0))
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as i64;
+        .as_secs() as i64;
 
     conn.execute(
         "INSERT INTO entries (id, timestamp, kind, payload) VALUES (?1, ?2, ?3, ?4)",
