@@ -1,4 +1,5 @@
-use crate::entry::{ContextAction, Entry, EntryKind, NotifItem};
+use crate::entry::{Entry, EntryKind, NotifItem, ContextAction};
+use crate::mpris;
 use crate::store;
 use crate::view;
 use forkos_shared::command::{system_commands, Command};
@@ -6,12 +7,20 @@ use forkos_shared::mode::Mode;
 use forkos_shared::search;
 use forkos_shared::sources;
 use iced::keyboard::{self, key};
-use iced::widget::text_input;
+use iced::widget::{scrollable, text_input};
 use iced::{Element, Subscription, Task};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 pub static BOTTOM_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 pub static PALETTE_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
+
+#[derive(Debug, Clone)]
+pub enum NiriWindowEvent {
+    Opened { id: u64, title: String, app_id: String },
+    Closed { id: u64 },
+    Focused { id: Option<u64> },
+}
 
 pub struct Narrative {
     pub entries: Vec<Entry>,
@@ -23,6 +32,12 @@ pub struct Narrative {
     pub palette_selected: usize,
     pub bottom_query: String,
     pub sources_loaded: bool,
+    pub current_media: Option<mpris::MediaInfo>,
+    pub mpris_player: Option<String>,
+    pub media_entry_idx: Option<usize>,
+    pub scroll_at_bottom: bool,
+    pub active_windows: HashMap<u64, (String, String)>,
+    pub active_window_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,9 +52,13 @@ pub enum Message {
     BottomInputSubmit,
     SourcesLoaded(sources::LoadedSources),
     ContextAction(String),
-    MediaPlayPause,
-    MediaNext,
-    MediaPrev,
+    NiriEvent(NiriWindowEvent),
+    NiriConnectionLost,
+    MediaUpdate(Option<mpris::MediaInfo>),
+    MediaCommand(mpris::MediaCommand),
+    MprisUnavailable,
+    FeedScrolled(scrollable::Viewport),
+    Noop,
 }
 
 impl Narrative {
@@ -55,8 +74,6 @@ impl Narrative {
                 entries.push(e);
             }
         }
-
-        // Entrées de démo (en mémoire uniquement)
         entries.extend(demo_entries());
 
         let commands = system_commands();
@@ -72,6 +89,12 @@ impl Narrative {
             palette_selected: 0,
             bottom_query: String::new(),
             sources_loaded: false,
+            current_media: None,
+            mpris_player: None,
+            media_entry_idx: None,
+            scroll_at_bottom: true,
+            active_windows: HashMap::new(),
+            active_window_id: None,
         };
 
         let tasks = Task::batch([
@@ -125,33 +148,24 @@ impl Narrative {
             Message::PaletteExecute => {
                 if self.palette_open {
                     if let Some(cmd) = self.palette_filtered.get(self.palette_selected).cloned() {
-                        // Enregistre la recherche palette
-                        let palette_kind = EntryKind::PaletteSearch {
+                        self.add_entry(EntryKind::PaletteSearch {
                             query: self.palette_query.clone(),
                             result_chosen: Some(cmd.name.clone()),
-                        };
-                        if let Some(e) = store::append(palette_kind, &self.session_id) {
-                            self.entries.push(e);
-                        }
-
-                        // Enregistre le lancement
-                        let launch_kind = EntryKind::AppLaunched {
+                        });
+                        self.add_entry(EntryKind::AppLaunched {
                             name: cmd.name.clone(),
                             detail: cmd.description.clone(),
                             icon: cmd.icon.clone(),
                             duration: None,
-                        };
-                        if let Some(e) = store::append(launch_kind, &self.session_id) {
-                            self.entries.push(e);
-                        }
-
+                        });
                         if let Some(exec) = &cmd.exec {
                             spawn_exec(exec);
                         }
                     }
                     self.palette_open = false;
                     self.palette_query.clear();
-                    return text_input::focus(BOTTOM_INPUT_ID.clone());
+                    let snap = self.snap_if_at_bottom();
+                    return Task::batch([text_input::focus(BOTTOM_INPUT_ID.clone()), snap]);
                 }
                 Task::none()
             }
@@ -173,13 +187,10 @@ impl Narrative {
             Message::BottomInputSubmit => {
                 let query = self.bottom_query.trim().to_string();
                 if !query.is_empty() {
-                    let kind = EntryKind::System { message: query };
-                    if let Some(e) = store::append(kind, &self.session_id) {
-                        self.entries.push(e);
-                    }
+                    self.add_entry(EntryKind::System { message: query });
                     self.bottom_query.clear();
                 }
-                Task::none()
+                self.snap_if_at_bottom()
             }
 
             Message::SourcesLoaded(loaded) => {
@@ -192,14 +203,103 @@ impl Narrative {
             }
 
             Message::ContextAction(cmd) => {
-                spawn_exec(&cmd);
+                if !cmd.is_empty() {
+                    spawn_exec(&cmd);
+                }
                 Task::none()
             }
 
-            Message::MediaPlayPause | Message::MediaNext | Message::MediaPrev => {
-                // MPRIS D-Bus — TODO: phase 7
+            Message::NiriEvent(ev) => match ev {
+                NiriWindowEvent::Opened { id, title, app_id } => {
+                    self.active_windows.insert(id, (app_id.clone(), title.clone()));
+                    self.add_entry(EntryKind::AppLaunched {
+                        name: app_id,
+                        detail: title,
+                        icon: String::new(),
+                        duration: None,
+                    });
+                    self.snap_if_at_bottom()
+                }
+                NiriWindowEvent::Closed { id } => {
+                    if let Some((app_id, _)) = self.active_windows.remove(&id) {
+                        self.add_entry(EntryKind::System {
+                            message: format!("fermé : {}", app_id),
+                        });
+                    }
+                    self.snap_if_at_bottom()
+                }
+                NiriWindowEvent::Focused { id } => {
+                    self.active_window_id = id;
+                    Task::none()
+                }
+            },
+
+            Message::NiriConnectionLost => Task::none(),
+
+            Message::MediaUpdate(info) => {
+                match info {
+                    Some(info) => {
+                        let track_changed = self
+                            .current_media
+                            .as_ref()
+                            .map(|m| m.title != info.title || m.artist != info.artist)
+                            .unwrap_or(true);
+
+                        let kind = EntryKind::Media {
+                            title: info.title.clone(),
+                            artist: info.artist.clone(),
+                            progress_secs: info.progress_secs,
+                            duration_secs: info.duration_secs,
+                            playing: info.playing,
+                        };
+
+                        let snap = if track_changed {
+                            self.add_entry(kind);
+                            self.media_entry_idx = self.entries.len().checked_sub(1);
+                            self.snap_if_at_bottom()
+                        } else {
+                            if let Some(idx) = self.media_entry_idx {
+                                if let Some(e) = self.entries.get_mut(idx) {
+                                    e.kind = kind;
+                                }
+                            }
+                            Task::none()
+                        };
+
+                        self.mpris_player = Some(info.service.clone());
+                        self.current_media = Some(info);
+                        snap
+                    }
+                    None => {
+                        self.mpris_player = None;
+                        Task::none()
+                    }
+                }
+            }
+
+            Message::MediaCommand(cmd) => {
+                if let Some(service) = self.mpris_player.clone() {
+                    Task::perform(
+                        async move {
+                            if let Ok(conn) = zbus::Connection::session().await {
+                                mpris::send_command(&conn, &service, cmd).await;
+                            }
+                        },
+                        |_| Message::Noop,
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+
+            Message::MprisUnavailable => Task::none(),
+
+            Message::FeedScrolled(viewport) => {
+                self.scroll_at_bottom = viewport.relative_offset().y >= 0.99;
                 Task::none()
             }
+
+            Message::Noop => Task::none(),
         }
     }
 
@@ -208,19 +308,11 @@ impl Narrative {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        keyboard::on_key_press(|key, modifiers| {
-            let ctrl_k = modifiers.control()
-                && matches!(&key, keyboard::Key::Character(c) if c.as_str() == "k");
-            if ctrl_k {
-                return Some(Message::PaletteToggle);
-            }
-            match key {
-                keyboard::Key::Named(key::Named::ArrowDown) => Some(Message::PaletteSelectNext),
-                keyboard::Key::Named(key::Named::ArrowUp) => Some(Message::PaletteSelectPrevious),
-                keyboard::Key::Named(key::Named::Escape) => Some(Message::PaletteCancel),
-                _ => None,
-            }
-        })
+        Subscription::batch([
+            keyboard_subscription(),
+            niri_subscription(),
+            mpris_subscription(),
+        ])
     }
 
     fn recompute_palette(&mut self) {
@@ -233,6 +325,160 @@ impl Narrative {
         let max = self.palette_filtered.len().saturating_sub(1);
         self.palette_selected = self.palette_selected.min(max);
     }
+
+    fn add_entry(&mut self, kind: EntryKind) {
+        if let Some(e) = store::append(kind, &self.session_id) {
+            self.entries.push(e);
+        }
+    }
+
+    fn snap_if_at_bottom(&self) -> Task<Message> {
+        if self.scroll_at_bottom {
+            scrollable::snap_to(
+                view::FEED_SCROLL_ID.clone(),
+                scrollable::RelativeOffset { x: 0.0, y: 1.0 },
+            )
+        } else {
+            Task::none()
+        }
+    }
+}
+
+fn keyboard_subscription() -> Subscription<Message> {
+    keyboard::on_key_press(|key, modifiers| {
+        let ctrl_k = modifiers.control()
+            && matches!(&key, keyboard::Key::Character(c) if c.as_str() == "k");
+        if ctrl_k {
+            return Some(Message::PaletteToggle);
+        }
+        match key {
+            keyboard::Key::Named(key::Named::ArrowDown) => Some(Message::PaletteSelectNext),
+            keyboard::Key::Named(key::Named::ArrowUp) => Some(Message::PaletteSelectPrevious),
+            keyboard::Key::Named(key::Named::Escape) => Some(Message::PaletteCancel),
+            _ => None,
+        }
+    })
+}
+
+enum NiriState {
+    Disconnected,
+    Connected(
+        tokio::process::Child,
+        tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+    ),
+}
+
+fn niri_subscription() -> Subscription<Message> {
+    use iced::futures::stream;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    Subscription::run_with_id(
+        "niri-ipc",
+        stream::unfold(NiriState::Disconnected, |state| async move {
+            match state {
+                NiriState::Disconnected => {
+                    match tokio::process::Command::new("niri")
+                        .args(["msg", "-j", "event-stream"])
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(mut child) => match child.stdout.take() {
+                            Some(stdout) => {
+                                let lines = BufReader::new(stdout).lines();
+                                Some((Message::Noop, NiriState::Connected(child, lines)))
+                            }
+                            None => {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                Some((Message::Noop, NiriState::Disconnected))
+                            }
+                        },
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            Some((Message::Noop, NiriState::Disconnected))
+                        }
+                    }
+                }
+                NiriState::Connected(child, mut lines) => match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        let msg = parse_niri_event(&line)
+                            .map(Message::NiriEvent)
+                            .unwrap_or(Message::Noop);
+                        Some((msg, NiriState::Connected(child, lines)))
+                    }
+                    _ => {
+                        drop(child);
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        Some((Message::NiriConnectionLost, NiriState::Disconnected))
+                    }
+                },
+            }
+        }),
+    )
+}
+
+enum MprisState {
+    Disconnected,
+    Connected(zbus::Connection),
+}
+
+fn mpris_subscription() -> Subscription<Message> {
+    use iced::futures::stream;
+
+    Subscription::run_with_id(
+        "mpris-poll",
+        stream::unfold(MprisState::Disconnected, |state| async move {
+            match state {
+                MprisState::Disconnected => {
+                    match zbus::Connection::session().await {
+                        Ok(conn) => {
+                            let info = crate::mpris::poll_media(&conn).await;
+                            Some((Message::MediaUpdate(info), MprisState::Connected(conn)))
+                        }
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                            Some((Message::MprisUnavailable, MprisState::Disconnected))
+                        }
+                    }
+                }
+                MprisState::Connected(conn) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let info = crate::mpris::poll_media(&conn).await;
+                    Some((Message::MediaUpdate(info), MprisState::Connected(conn)))
+                }
+            }
+        }),
+    )
+}
+
+fn parse_niri_event(line: &str) -> Option<NiriWindowEvent> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+
+    if let Some(data) = v.get("WindowOpenedOrChanged").or_else(|| v.get("WindowOpened")) {
+        let win = data.get("window")?;
+        let id = win.get("id")?.as_u64()?;
+        let title = win.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let app_id = win.get("app_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        return Some(NiriWindowEvent::Opened { id, title, app_id });
+    }
+
+    if let Some(data) = v.get("WindowClosed") {
+        let id = data
+            .get("id")
+            .or_else(|| data.get("window_id"))
+            .and_then(|v| v.as_u64())?;
+        return Some(NiriWindowEvent::Closed { id });
+    }
+
+    if let Some(data) = v.get("WindowFocusChanged").or_else(|| v.get("WindowFocused")) {
+        let id = data
+            .get("id")
+            .or_else(|| data.get("window_id"))
+            .and_then(|v| v.as_u64());
+        return Some(NiriWindowEvent::Focused { id });
+    }
+
+    None
 }
 
 fn spawn_exec(exec: &str) {
@@ -278,7 +524,8 @@ fn demo_entries() -> Vec<Entry> {
                 items: vec![
                     NotifItem {
                         sender: "marc.l@labo".to_string(),
-                        preview: "retour sur le proto immuable, j'ai testé ta branche...".to_string(),
+                        preview: "retour sur le proto immuable, j'ai testé ta branche..."
+                            .to_string(),
                         actions: vec![
                             ContextAction {
                                 label: "lire".to_string(),
@@ -316,7 +563,8 @@ fn demo_entries() -> Vec<Entry> {
             timestamp: now - Duration::minutes(5),
             kind: EntryKind::Shell {
                 command: "cargo build --release -p narrative".to_string(),
-                output_preview: "   Compiling narrative v0.1.0\n   Finished release [optimized]".to_string(),
+                output_preview: "   Compiling narrative v0.1.0\n   Finished release [optimized]"
+                    .to_string(),
                 exit_code: 0,
             },
         },

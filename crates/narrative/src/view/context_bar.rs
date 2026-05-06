@@ -40,9 +40,9 @@ pub fn render(actions: Vec<ContextAction>) -> Element<'static, Message> {
 }
 
 pub fn media_controls() -> Element<'static, Message> {
-    let prev = action_btn("⏮", Message::MediaPrev);
-    let play = action_btn("⏸", Message::MediaPlayPause);
-    let next = action_btn("⏭", Message::MediaNext);
+    let prev = action_btn("⏮", Message::MediaCommand(crate::mpris::MediaCommand::Previous));
+    let play = action_btn("⏸", Message::MediaCommand(crate::mpris::MediaCommand::PlayPause));
+    let next = action_btn("⏭", Message::MediaCommand(crate::mpris::MediaCommand::Next));
     let queue = label_btn("file d'attente");
     let fullscreen = label_btn("plein écran");
 

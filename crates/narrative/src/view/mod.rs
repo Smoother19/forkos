@@ -7,12 +7,18 @@ use crate::app::{Message, Narrative, BOTTOM_INPUT_ID};
 use forkos_shared::theme;
 use iced::widget::{column, container, row, scrollable, text, text_input, Space};
 use iced::{Background, Border, Color, Element, Length, Padding};
+use std::sync::LazyLock;
+
+pub static FEED_SCROLL_ID: LazyLock<scrollable::Id> = LazyLock::new(scrollable::Id::unique);
 
 pub fn render(state: &Narrative) -> Element<'_, Message> {
     let window = column![
         header::render(),
         separator(),
-        scrollable(entries_column(state)).height(Length::Fill),
+        scrollable(entries_column(state))
+            .height(Length::Fill)
+            .id(FEED_SCROLL_ID.clone())
+            .on_scroll(Message::FeedScrolled),
         separator(),
         bottom_bar(state),
     ]
