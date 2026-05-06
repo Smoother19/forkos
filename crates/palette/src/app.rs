@@ -125,6 +125,18 @@ impl Palette {
             }
 
             Message::Execute => match self.mode() {
+                Mode::Narrative => {
+                    let text = self.effective_query().trim().to_string();
+                    if text.is_empty() {
+                        return Task::none();
+                    }
+                    match crate::narrative::insert_from_text(&text) {
+                        Ok(()) => tracing::info!("narrative: ajouté « {} »", text),
+                        Err(e) => tracing::error!("narrative: échec insert ({})", e),
+                    }
+                    std::process::exit(0);
+                }
+
                 Mode::Shell => {
                     let cmd = self.effective_query().to_string();
                     if cmd.is_empty() {

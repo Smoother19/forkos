@@ -21,6 +21,7 @@ pub fn render(state: &Palette) -> Element<'_, Message> {
         Mode::Contacts => render_contacts(state),
         Mode::Tags => render_tags(state),
         Mode::FileContent => render_grep(state),
+        Mode::Narrative => render_narrative(eq),
         Mode::Universal | Mode::Commands => render_commands(state),
     }
 }
@@ -375,4 +376,60 @@ fn highlighted_text<'a>(
     } else {
         text(name).size(size).color(color).into()
     }
+}
+
+// ── Mode Narrative ─────────────────────────────────────────────────────────────
+
+fn render_narrative(eq: &str) -> Element<'_, Message> {
+    use iced::widget::{column, container, row, text};
+    use iced::{Background, Length, Padding};
+
+    if eq.trim().is_empty() {
+        return container(
+            text("tape une note ou une tâche…")
+                .size(13)
+                .color(theme::MUTED),
+        )
+        .padding(Padding {
+            top: 20.0,
+            right: 24.0,
+            bottom: 20.0,
+            left: 24.0,
+        })
+        .into();
+    }
+
+    // Détecte le type d'entrée à créer
+    let (icon, kind_label, preview_text) = if let Some(rest) = eq.trim().strip_prefix("[ ]") {
+        ("◇", "tâche", rest.trim())
+    } else if let Some(rest) = eq.trim().strip_prefix("[x]").or_else(|| eq.trim().strip_prefix("[X]")) {
+        ("◆", "tâche (faite)", rest.trim())
+    } else {
+        ("✎", "note", eq.trim())
+    };
+
+    let preview = row![
+        text(icon).size(16).color(theme::FOAM),
+        column![
+            text(kind_label).size(10).color(theme::MUTED),
+            text(preview_text).size(13).color(theme::TEXT),
+        ]
+        .spacing(2),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center)
+    .padding(Padding {
+        top: 14.0,
+        right: 24.0,
+        bottom: 14.0,
+        left: 24.0,
+    });
+
+    container(preview)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::SURFACE)),
+            ..Default::default()
+        })
+        .into()
 }

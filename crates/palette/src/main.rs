@@ -3,6 +3,7 @@ mod calculator;
 mod command;
 mod grep;
 mod mode;
+mod narrative;
 mod search;
 mod shell;
 mod sources;

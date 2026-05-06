@@ -11,6 +11,8 @@ pub enum Mode {
     Contacts,
     Tags,
     FileContent,
+    /// Crée une entrée dans le fil narratif (note ou tâche).
+    Narrative,
 }
 
 impl Mode {
@@ -26,6 +28,7 @@ impl Mode {
             Some('@') => (Mode::Contacts, query[1..].trim_start()),
             Some('#') => (Mode::Tags, query[1..].trim_start()),
             Some('/') => (Mode::FileContent, query[1..].trim_start()),
+            Some('!') => (Mode::Narrative, query[1..].trim_start()),
             _ => (Mode::Universal, query),
         }
     }
@@ -40,6 +43,7 @@ impl Mode {
             Mode::Contacts => "contacts",
             Mode::Tags => "tags",
             Mode::FileContent => "contenu",
+            Mode::Narrative => "fil narratif",
         }
     }
 
@@ -53,6 +57,7 @@ impl Mode {
             Mode::Contacts => "nom, email...",
             Mode::Tags => "tag de note...",
             Mode::FileContent => "motif à chercher dans les fichiers...",
+            Mode::Narrative => "note libre  ·  [ ] tâche  ·  [x] fait",
         }
     }
 
@@ -66,13 +71,14 @@ impl Mode {
             Mode::Contacts => theme::LOVE,
             Mode::Tags => theme::ROSE,
             Mode::FileContent => theme::TEXT,
+            Mode::Narrative => theme::ROSE,
         }
     }
 
     /// Conseil affiché dans le footer selon le mode.
     pub fn hint(&self) -> &'static str {
         match self {
-            Mode::Universal => "↑↓ naviguer  ⌘1..9 saut direct  ↵ exécuter  > $ ? : @ # /",
+            Mode::Universal => "↑↓ naviguer  ⌘1..9 saut direct  ↵ exécuter  > $ ? : @ # / !",
             Mode::Commands => "> commandes  ⌘1..9 saut  ↑↓ naviguer  ↵ exécuter",
             Mode::Shell => "↵ exécuter  ⇥ autocomplète  ↑↓ historique  esc quitter",
             Mode::Web => "↵ ouvrir DuckDuckGo  esc quitter",
@@ -80,6 +86,7 @@ impl Mode {
             Mode::Contacts => "↑↓ naviguer  ↵ ouvrir  esc quitter",
             Mode::Tags => "↑↓ naviguer  ↵ ouvrir note  esc quitter",
             Mode::FileContent => "↵ ouvrir fichier  esc quitter",
+            Mode::Narrative => "↵ ajouter au fil  ·  [ ] tâche  ·  [x] fait  ·  esc annuler",
         }
     }
 }
