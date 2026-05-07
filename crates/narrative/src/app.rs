@@ -250,22 +250,29 @@ impl Narrative {
 
             Message::PtySubmit => {
                 let line = format!("{}\n", self.pty_input.trim());
+                if line.trim().is_empty() {
+                    return Task::none();
+                }
                 self.pty_input.clear();
+
+                let open_task = if !self.bar_open {
+                    self.bar_open = true;
+                    let h = (self.screen_height as f32 * 0.6) as u32;
+                    Task::batch([
+                        Task::done(Message::SizeChange((0, h))),
+                        text_input::focus(TERMINAL_INPUT_ID.clone()),
+                    ])
+                } else {
+                    Task::none()
+                };
+
                 if let Ok(mut w) = PTY_WRITER.lock() {
                     if let Some(writer) = w.as_mut() {
                         let _ = writer.write_all(line.as_bytes());
                     }
                 }
-                // Auto-ouvre le menu pour voir la sortie
-                if !self.bar_open {
-                    self.bar_open = true;
-                    let height = (self.screen_height as f32 * 0.6) as u32;
-                    return Task::batch([
-                        Task::done(Message::SizeChange((0, height))),
-                        text_input::focus(TERMINAL_INPUT_ID.clone()),
-                    ]);
-                }
-                Task::none()
+
+                open_task
             }
 
             Message::SourcesLoaded(loaded) => {

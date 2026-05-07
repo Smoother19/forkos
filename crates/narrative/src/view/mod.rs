@@ -1,7 +1,6 @@
 mod context_bar;
 mod entry_view;
 mod header;
-mod palette_inline;
 pub mod bar;
 pub mod terminal;
 
@@ -42,21 +41,11 @@ fn render_open(state: &Narrative) -> Element<'_, Message> {
         body = body.push(separator());
     }
 
-    // Zone centrale : palette inline si ouverte, sinon terminal PTY
-    if state.palette_open {
-        body = body.push(
-            container(palette_inline::render(state))
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .padding(Padding { top: 0.0, right: 24.0, bottom: 0.0, left: 24.0 })
-                .style(|_| container::Style {
-                    background: Some(Background::Color(theme::BASE)),
-                    ..Default::default()
-                }),
-        );
-    } else {
-        body = body.push(terminal::render(state));
-    }
+    body = body.push(
+        container(terminal::render(state))
+            .height(Length::Fill)
+            .width(Length::Fill),
+    );
 
     body = body.push(separator());
     body = body.push(bar::render(state));

@@ -1,4 +1,4 @@
-use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem, SlavePty};
+use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::Read;
 
 #[derive(Debug, Clone)]
@@ -126,7 +126,14 @@ pub fn parse_ansi(raw: &str) -> Vec<PtyLine> {
     }
 
     while i < bytes.len() {
-        // Séquence ESC [
+        // Backspace → retire le dernier char du texte en cours
+        if bytes[i] == 0x08 {
+            current_text.pop();
+            i += 1;
+            continue;
+        }
+
+        // CSI : ESC [ → séquences de couleur (traitée en priorité)
         if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
             flush!();
             i += 2;
@@ -172,7 +179,48 @@ pub fn parse_ansi(raw: &str) -> Vec<PtyLine> {
                     }
                 }
             }
-            // Autres séquences (curseur, effacement) → ignorées
+            // Autres séquences CSI (curseur, effacement…) → ignorées
+            continue;
+        }
+
+        // OSC : ESC ] … BEL ou ESC \ → titre terminal, ignorer
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b']' {
+            flush!();
+            i += 2;
+            while i < bytes.len() {
+                if bytes[i] == 0x07 {
+                    i += 1;
+                    break;
+                }
+                if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // ESC c (RIS) → ignorer
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'c' {
+            flush!();
+            i += 2;
+            continue;
+        }
+
+        // ESC ( / ESC ) / ESC > (désignation charset) → ignorer ESC + lettre + paramètre
+        if bytes[i] == 0x1b && i + 1 < bytes.len()
+            && (bytes[i + 1] == b'(' || bytes[i + 1] == b')' || bytes[i + 1] == b'>')
+        {
+            flush!();
+            i = (i + 3).min(bytes.len());
+            continue;
+        }
+
+        // Catch-all ESC : tout autre ESC + une lettre → ignorer les deux octets
+        if bytes[i] == 0x1b && i + 1 < bytes.len() {
+            flush!();
+            i += 2;
             continue;
         }
 
