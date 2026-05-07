@@ -65,8 +65,8 @@ spawn-at-startup "narrative"
 binds {
     // ── Shell narratif forkOS ──────────────────────────────────
     // F20 est émis par keyd quand Super est tapé seul (sans autre touche)
-    // Essaie socat (socket Unix), fallback sur SIGUSR1 si socat absent
-    F20 { spawn "sh" "-c" "echo toggle | socat - UNIX-CONNECT:/tmp/narrative.sock 2>/dev/null || pkill -USR1 narrative"; }
+    // narrative surveille /tmp/narrative-cmd toutes les 100ms
+    F20 { spawn "sh" "-c" "echo toggle >> /tmp/narrative-cmd"; }
     Mod+Space { spawn "palette"; }  // palette standalone en fallback
 
     // ── Terminal ───────────────────────────────────────────────

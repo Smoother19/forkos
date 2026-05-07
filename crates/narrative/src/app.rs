@@ -92,6 +92,9 @@ impl Narrative {
         let commands = system_commands();
         let palette_filtered = search::filter_and_sort(&commands, Mode::Universal, "");
 
+        // Vide le fichier de commande au démarrage pour repartir propre
+        let _ = std::fs::write("/tmp/narrative-cmd", "");
+
         let state = Self {
             entries,
             session_id,
@@ -179,27 +182,51 @@ impl Narrative {
             }
 
             Message::PaletteExecute => {
-                if self.palette_open {
-                    if let Some(cmd) = self.palette_filtered.get(self.palette_selected).cloned() {
-                        self.add_entry(EntryKind::PaletteSearch {
-                            query: self.palette_query.clone(),
-                            result_chosen: Some(cmd.name.clone()),
-                        });
-                        self.add_entry(EntryKind::AppLaunched {
-                            name: cmd.name.clone(),
-                            detail: cmd.description.clone(),
-                            icon: cmd.icon.clone(),
-                            duration: None,
-                        });
-                        if let Some(exec) = &cmd.exec {
-                            spawn_exec(exec);
+                if !self.palette_open {
+                    return Task::none();
+                }
+                let cmd = match self.palette_filtered.get(self.palette_selected).cloned() {
+                    Some(c) => c,
+                    None => {
+                        self.palette_open = false;
+                        self.palette_query.clear();
+                        return text_input::focus(BOTTOM_INPUT_ID.clone());
+                    }
+                };
+
+                self.add_entry(EntryKind::PaletteSearch {
+                    query: self.palette_query.clone(),
+                    result_chosen: Some(cmd.name.clone()),
+                });
+                self.add_entry(EntryKind::AppLaunched {
+                    name: cmd.name.clone(),
+                    detail: cmd.description.clone(),
+                    icon: cmd.icon.clone(),
+                    duration: None,
+                });
+
+                // Lance via PTY pour que la sortie apparaisse dans le terminal
+                if let Some(exec) = &cmd.exec {
+                    let input = format!("{}\n", exec);
+                    if let Ok(mut guard) = PTY_WRITER.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(input.as_bytes());
                         }
                     }
-                    self.palette_open = false;
-                    self.palette_query.clear();
-                    return text_input::focus(BOTTOM_INPUT_ID.clone());
                 }
-                Task::none()
+
+                self.palette_open = false;
+                self.palette_query.clear();
+
+                let open_task = if !self.bar_open {
+                    self.bar_open = true;
+                    let h = (self.screen_height as f32 * 0.6) as u32;
+                    Task::done(Message::SizeChange((0, h)))
+                } else {
+                    Task::none()
+                };
+
+                Task::batch([open_task, text_input::focus(BOTTOM_INPUT_ID.clone())])
             }
 
             Message::PaletteCancel => {
@@ -248,15 +275,6 @@ impl Narrative {
                 let line = self.pty_input.trim().to_string();
                 self.pty_input.clear();
 
-                if line.is_empty() {
-                    if let Ok(mut guard) = PTY_WRITER.lock() {
-                        if let Some(w) = guard.as_mut() {
-                            let _ = w.write_all(b"\n");
-                        }
-                    }
-                    return Task::none();
-                }
-
                 let open_task = if !self.bar_open {
                     self.bar_open = true;
                     let h = (self.screen_height as f32 * 0.6) as u32;
@@ -265,10 +283,11 @@ impl Narrative {
                     Task::none()
                 };
 
+                // Envoie au PTY — vide → \n (prompt frais), sinon commande + \n
+                let to_send = format!("{}\n", line);
                 if let Ok(mut guard) = PTY_WRITER.lock() {
                     if let Some(w) = guard.as_mut() {
-                        let input = format!("{}\n", line);
-                        let _ = w.write_all(input.as_bytes());
+                        let _ = w.write_all(to_send.as_bytes());
                     }
                 }
 
@@ -432,63 +451,26 @@ fn keyboard_subscription() -> Subscription<Message> {
     })
 }
 
-enum ToggleState {
-    Init,
-    Socket(tokio::net::UnixListener),
-    Signal,
-}
-
-/// Essaie d'abord le socket Unix, tombe back sur SIGUSR1 si bind échoue
+/// Polling /tmp/narrative-cmd toutes les 100ms — F20 écrit dans ce fichier
 fn toggle_subscription() -> Subscription<Message> {
     use iced::futures::stream;
 
     Subscription::run_with_id(
-        "toggle-listener",
-        stream::unfold(ToggleState::Init, |state| async move {
-            match state {
-                ToggleState::Init => {
-                    let path = "/tmp/narrative.sock";
-                    let _ = std::fs::remove_file(path);
-                    match tokio::net::UnixListener::bind(path) {
-                        Ok(listener) => {
-                            Some((Message::Noop, ToggleState::Socket(listener)))
-                        }
-                        Err(e) => {
-                            tracing::warn!("socket bind failed ({}), falling back to SIGUSR1", e);
-                            Some((Message::Noop, ToggleState::Signal))
-                        }
-                    }
+        "toggle-file-watch",
+        stream::unfold(0u64, |last_size| async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                let path = "/tmp/narrative-cmd";
+                if !std::path::Path::new(path).exists() {
+                    let _ = std::fs::write(path, "");
+                    continue;
                 }
 
-                ToggleState::Socket(listener) => {
-                    use tokio::io::{AsyncBufReadExt, BufReader};
-                    match listener.accept().await {
-                        Ok((stream, _)) => {
-                            let mut lines = BufReader::new(stream).lines();
-                            if let Ok(Some(line)) = lines.next_line().await {
-                                if line.trim() == "toggle" {
-                                    return Some((Message::BarToggle, ToggleState::Socket(listener)));
-                                }
-                            }
-                            Some((Message::Noop, ToggleState::Socket(listener)))
-                        }
-                        Err(_) => Some((Message::Noop, ToggleState::Socket(listener))),
-                    }
-                }
-
-                ToggleState::Signal => {
-                    match tokio::signal::unix::signal(
-                        tokio::signal::unix::SignalKind::user_defined1(),
-                    ) {
-                        Ok(mut sig) => {
-                            sig.recv().await;
-                            Some((Message::BarToggle, ToggleState::Signal))
-                        }
-                        Err(_) => {
-                            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                            Some((Message::Noop, ToggleState::Signal))
-                        }
-                    }
+                let current_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                if current_size > last_size {
+                    let _ = std::fs::write(path, "");
+                    return Some((Message::BarToggle, 0u64));
                 }
             }
         }),
@@ -522,7 +504,12 @@ fn pty_subscription() -> Subscription<Message> {
                 };
                 match rx.recv().await {
                     Some(chunk) => Some((Message::PtyOutput(chunk), Some(rx))),
-                    None => None,
+                    None => {
+                        // PTY mort — redémarre dans 1s
+                        tracing::warn!("PTY died, restarting...");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        Some((Message::Noop, None))
+                    }
                 }
             },
         ),
