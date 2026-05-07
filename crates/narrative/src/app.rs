@@ -72,6 +72,7 @@ pub enum Message {
     PtyInput(String),
     PtyInputChanged(String),
     PtySubmit,
+    PtyRawInput(String),
     Noop,
 }
 
@@ -268,16 +269,15 @@ impl Narrative {
                 if self.palette_open {
                     self.palette_open = false;
                     self.palette_query.clear();
-                    return text_input::focus(BOTTOM_INPUT_ID.clone());
-                }
-                if self.bar_open {
+                    self.palette_selected = 0;
+                } else if self.bar_open {
                     self.bar_open = false;
                     return Task::batch([
                         Task::done(Message::SizeChange((0, 48))),
                         text_input::focus(BOTTOM_INPUT_ID.clone()),
                     ]);
                 }
-                Task::none()
+                text_input::focus(BOTTOM_INPUT_ID.clone())
             }
 
             Message::PtyOutput(chunk) => {
@@ -292,7 +292,7 @@ impl Narrative {
                 )
             }
 
-            Message::PtyInput(s) => {
+            Message::PtyInput(s) | Message::PtyRawInput(s) => {
                 if let Ok(mut w) = PTY_WRITER.lock() {
                     if let Some(writer) = w.as_mut() {
                         let _ = writer.write_all(s.as_bytes());
@@ -511,44 +511,69 @@ impl Narrative {
 
 fn keyboard_subscription() -> Subscription<Message> {
     keyboard::on_key_press(|key, modifiers| {
-        let ctrl_k = modifiers.control()
-            && matches!(&key, keyboard::Key::Character(c) if c.as_str() == "k");
-        if ctrl_k {
-            return Some(Message::PaletteToggle);
+        // Raccourcis Ctrl — les seuls capturés globalement sans risque
+        if modifiers.control() {
+            if let keyboard::Key::Character(c) = &key {
+                return match c.as_str() {
+                    "k" => Some(Message::PaletteToggle),
+                    "c" => Some(Message::PtyRawInput("\x03".to_string())), // SIGINT
+                    "d" => Some(Message::PtyRawInput("\x04".to_string())), // EOF
+                    "l" => Some(Message::PtyRawInput("\x0c".to_string())), // clear
+                    "a" => Some(Message::PtyRawInput("\x01".to_string())), // début ligne
+                    "e" => Some(Message::PtyRawInput("\x05".to_string())), // fin ligne
+                    "u" => Some(Message::PtyRawInput("\x15".to_string())), // efface ligne
+                    _ => None,
+                };
+            }
         }
-        match key {
-            keyboard::Key::Named(key::Named::F20) => Some(Message::BarToggle),
-            keyboard::Key::Named(key::Named::ArrowDown) => Some(Message::PaletteSelectNext),
-            keyboard::Key::Named(key::Named::ArrowUp) => Some(Message::PaletteSelectPrevious),
-            keyboard::Key::Named(key::Named::Escape) => Some(Message::PaletteCancel),
-            // Enter/Return : géré exclusivement par on_submit des text_input
-            _ => None,
+
+        // Touches sans modificateur — capturées uniquement pour le PTY
+        // PAS de Esc, PAS de Enter : gérés par les widgets locaux
+        if modifiers == keyboard::Modifiers::empty() {
+            return match &key {
+                keyboard::Key::Named(key::Named::F20) => Some(Message::BarToggle),
+                keyboard::Key::Named(key::Named::Tab) => {
+                    Some(Message::PtyRawInput("\t".to_string()))
+                }
+                keyboard::Key::Named(key::Named::ArrowUp) => {
+                    Some(Message::PtyRawInput("\x1b[A".to_string()))
+                }
+                keyboard::Key::Named(key::Named::ArrowDown) => {
+                    Some(Message::PtyRawInput("\x1b[B".to_string()))
+                }
+                _ => None,
+            };
         }
+
+        None
     })
 }
 
-/// Polling /tmp/narrative-cmd toutes les 100ms — F20 écrit dans ce fichier
+/// Polling /tmp/narrative-cmd toutes les 50ms — F20 écrit dans ce fichier
 fn toggle_subscription() -> Subscription<Message> {
     use iced::futures::stream;
 
     Subscription::run_with_id(
         "toggle-file-watch",
-        stream::unfold(0u64, |last_size| async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-                let path = "/tmp/narrative-cmd";
-                if !std::path::Path::new(path).exists() {
-                    let _ = std::fs::write(path, "");
-                    continue;
-                }
-
-                let current_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                if current_size > last_size {
-                    let _ = std::fs::write(path, "");
-                    return Some((Message::BarToggle, 0u64));
-                }
+        stream::unfold((0u64, false), |(last_size, initialized)| async move {
+            if !initialized {
+                let _ = std::fs::write("/tmp/narrative-cmd", "");
+                tracing::info!("toggle watcher prêt : /tmp/narrative-cmd");
+                return Some((Message::Noop, (0u64, true)));
             }
+
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            let path = "/tmp/narrative-cmd";
+            let current_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+            if current_size > last_size {
+                let _ = std::fs::write(path, "");
+                tracing::debug!("toggle déclenché via fichier");
+                return Some((Message::BarToggle, (0u64, true)));
+            }
+
+            Some((Message::Noop, (current_size, true)))
         }),
     )
 }

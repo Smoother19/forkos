@@ -65,8 +65,11 @@ spawn-at-startup "narrative"
 binds {
     // ── Shell narratif forkOS ──────────────────────────────────
     // F20 est émis par keyd quand Super est tapé seul (sans autre touche)
-    // narrative surveille /tmp/narrative-cmd toutes les 100ms
+    // narrative surveille /tmp/narrative-cmd toutes les 50ms
     F20 { spawn "sh" "-c" "echo toggle >> /tmp/narrative-cmd"; }
+    // Fallback : Mod+` fonctionne sans keyd — si ça marche mais pas Super,
+    // le problème est dans keyd (pas dans narrative ni niri)
+    Mod+grave { spawn "sh" "-c" "echo toggle >> /tmp/narrative-cmd"; }
     Mod+Space { spawn "palette"; }  // palette standalone en fallback
 
     // ── Terminal ───────────────────────────────────────────────
