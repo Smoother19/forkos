@@ -17,7 +17,6 @@ use std::sync::LazyLock;
 
 pub static BOTTOM_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 pub static PALETTE_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
-pub static TERMINAL_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 
 /// Writer global vers le stdin PTY — accessible depuis n'importe quelle branche update()
 pub static PTY_WRITER: LazyLock<std::sync::Mutex<Option<Box<dyn Write + Send>>>> =
@@ -115,7 +114,7 @@ impl Narrative {
 
         let tasks = Task::batch([
             Task::perform(sources::load_all(), Message::SourcesLoaded),
-            text_input::focus(TERMINAL_INPUT_ID.clone()),
+            text_input::focus(BOTTOM_INPUT_ID.clone()),
         ]);
 
         (state, tasks)
@@ -130,13 +129,10 @@ impl Narrative {
                 } else {
                     48
                 };
-                let size_task = Task::done(Message::SizeChange((0, new_height)));
-                let focus_task = if self.bar_open {
-                    text_input::focus(TERMINAL_INPUT_ID.clone())
-                } else {
-                    text_input::focus(BOTTOM_INPUT_ID.clone())
-                };
-                Task::batch([size_task, focus_task])
+                Task::batch([
+                    Task::done(Message::SizeChange((0, new_height))),
+                    text_input::focus(BOTTOM_INPUT_ID.clone()),
+                ])
             }
 
             Message::ScreenGeometry(_w, h) => {
@@ -148,7 +144,7 @@ impl Narrative {
                 if self.palette_open {
                     self.palette_open = false;
                     self.palette_query.clear();
-                    text_input::focus(TERMINAL_INPUT_ID.clone())
+                    text_input::focus(BOTTOM_INPUT_ID.clone())
                 } else {
                     self.palette_open = true;
                     self.palette_query.clear();
@@ -201,7 +197,7 @@ impl Narrative {
                     }
                     self.palette_open = false;
                     self.palette_query.clear();
-                    return text_input::focus(TERMINAL_INPUT_ID.clone());
+                    return text_input::focus(BOTTOM_INPUT_ID.clone());
                 }
                 Task::none()
             }
@@ -210,7 +206,7 @@ impl Narrative {
                 if self.palette_open {
                     self.palette_open = false;
                     self.palette_query.clear();
-                    return text_input::focus(TERMINAL_INPUT_ID.clone());
+                    return text_input::focus(BOTTOM_INPUT_ID.clone());
                 }
                 if self.bar_open {
                     self.bar_open = false;
@@ -250,10 +246,16 @@ impl Narrative {
 
             Message::PtySubmit => {
                 let line = self.pty_input.trim().to_string();
+                self.pty_input.clear();
+
                 if line.is_empty() {
+                    if let Ok(mut guard) = PTY_WRITER.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(b"\n");
+                        }
+                    }
                     return Task::none();
                 }
-                self.pty_input.clear();
 
                 let open_task = if !self.bar_open {
                     self.bar_open = true;
@@ -263,18 +265,17 @@ impl Narrative {
                     Task::none()
                 };
 
-                let input = format!("{}\n", line);
-                let write_result = PTY_WRITER
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| {
-                        guard.as_mut().map(|w| w.write_all(input.as_bytes()).ok())
-                    });
-                if write_result.is_none() {
-                    tracing::warn!("PtySubmit: PTY writer not ready");
+                if let Ok(mut guard) = PTY_WRITER.lock() {
+                    if let Some(w) = guard.as_mut() {
+                        let input = format!("{}\n", line);
+                        let _ = w.write_all(input.as_bytes());
+                    }
                 }
 
-                open_task
+                Task::batch([
+                    open_task,
+                    text_input::focus(BOTTOM_INPUT_ID.clone()),
+                ])
             }
 
             Message::SourcesLoaded(loaded) => {
@@ -425,6 +426,7 @@ fn keyboard_subscription() -> Subscription<Message> {
             keyboard::Key::Named(key::Named::ArrowDown) => Some(Message::PaletteSelectNext),
             keyboard::Key::Named(key::Named::ArrowUp) => Some(Message::PaletteSelectPrevious),
             keyboard::Key::Named(key::Named::Escape) => Some(Message::PaletteCancel),
+            // Enter/Return : géré exclusivement par on_submit des text_input
             _ => None,
         }
     })
