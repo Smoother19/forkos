@@ -23,38 +23,46 @@ pub fn render(state: &Narrative) -> Element<'_, Message> {
         shadow: Default::default(),
     });
 
-    let shell_input = text_input("$ tape une commande...", &state.pty_input)
-        .id(BOTTOM_INPUT_ID.clone())
-        .on_input(Message::PtyInputChanged)
-        .on_submit(Message::PtySubmit)
-        .font(iced::Font::MONOSPACE)
-        .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
-        .size(12)
-        .style(|_, _| iced::widget::text_input::Style {
-            background: Background::Color(theme::OVERLAY),
-            border: Border {
-                color: theme::HIGHLIGHT_MED,
-                width: 1.0,
-                radius: 5.0.into(),
-            },
-            icon: theme::TEXT,
-            placeholder: theme::MUTED,
-            value: theme::TEXT,
-            selection: theme::HIGHLIGHT_MED,
-        });
-
     let now = chrono::Local::now();
     let time_str = now.format("%H:%M").to_string();
     let time_widget = text(time_str).size(11).color(theme::TEXT);
 
-    let content = row![
-        super_btn,
-        Space::new(Length::Fixed(8.0), Length::Shrink),
-        shell_input,
-        Space::new(Length::Fixed(12.0), Length::Shrink),
-        time_widget,
-        Space::new(Length::Fixed(14.0), Length::Shrink),
-    ]
+    let content: iced::widget::Row<'_, Message> = if state.bar_open {
+        row![
+            super_btn,
+            Space::new(Length::Fill, Length::Shrink),
+            time_widget,
+            Space::new(Length::Fixed(14.0), Length::Shrink),
+        ]
+    } else {
+        let shell_input = text_input("$ tape une commande...", &state.pty_input)
+            .id(BOTTOM_INPUT_ID.clone())
+            .on_input(Message::PtyInputChanged)
+            .on_submit(Message::PtySubmit)
+            .font(iced::Font::MONOSPACE)
+            .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
+            .size(12)
+            .style(|_, _| iced::widget::text_input::Style {
+                background: Background::Color(theme::OVERLAY),
+                border: Border {
+                    color: theme::HIGHLIGHT_MED,
+                    width: 1.0,
+                    radius: 5.0.into(),
+                },
+                icon: theme::TEXT,
+                placeholder: theme::MUTED,
+                value: theme::TEXT,
+                selection: theme::HIGHLIGHT_MED,
+            });
+        row![
+            super_btn,
+            Space::new(Length::Fixed(8.0), Length::Shrink),
+            shell_input,
+            Space::new(Length::Fixed(12.0), Length::Shrink),
+            time_widget,
+            Space::new(Length::Fixed(14.0), Length::Shrink),
+        ]
+    }
     .align_y(Alignment::Center)
     .height(Length::Fixed(48.0));
 

@@ -249,8 +249,8 @@ impl Narrative {
             }
 
             Message::PtySubmit => {
-                let line = format!("{}\n", self.pty_input.trim());
-                if line.trim().is_empty() {
+                let line = self.pty_input.trim().to_string();
+                if line.is_empty() {
                     return Task::none();
                 }
                 self.pty_input.clear();
@@ -258,18 +258,20 @@ impl Narrative {
                 let open_task = if !self.bar_open {
                     self.bar_open = true;
                     let h = (self.screen_height as f32 * 0.6) as u32;
-                    Task::batch([
-                        Task::done(Message::SizeChange((0, h))),
-                        text_input::focus(TERMINAL_INPUT_ID.clone()),
-                    ])
+                    Task::done(Message::SizeChange((0, h)))
                 } else {
                     Task::none()
                 };
 
-                if let Ok(mut w) = PTY_WRITER.lock() {
-                    if let Some(writer) = w.as_mut() {
-                        let _ = writer.write_all(line.as_bytes());
-                    }
+                let input = format!("{}\n", line);
+                let write_result = PTY_WRITER
+                    .lock()
+                    .ok()
+                    .and_then(|mut guard| {
+                        guard.as_mut().map(|w| w.write_all(input.as_bytes()).ok())
+                    });
+                if write_result.is_none() {
+                    tracing::warn!("PtySubmit: PTY writer not ready");
                 }
 
                 open_task
@@ -388,7 +390,7 @@ impl Narrative {
             keyboard_subscription(),
             niri_subscription(),
             mpris_subscription(),
-            socket_subscription(),
+            toggle_subscription(),
             pty_subscription(),
         ])
     }
@@ -428,40 +430,64 @@ fn keyboard_subscription() -> Subscription<Message> {
     })
 }
 
-/// Écoute sur /tmp/narrative.sock — niri envoie "toggle\n" via socat
-fn socket_subscription() -> Subscription<Message> {
+enum ToggleState {
+    Init,
+    Socket(tokio::net::UnixListener),
+    Signal,
+}
+
+/// Essaie d'abord le socket Unix, tombe back sur SIGUSR1 si bind échoue
+fn toggle_subscription() -> Subscription<Message> {
     use iced::futures::stream;
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::net::UnixListener;
 
     Subscription::run_with_id(
-        "socket-toggle",
-        stream::unfold(None::<UnixListener>, |state| async move {
-            let listener = match state {
-                Some(l) => l,
-                None => {
+        "toggle-listener",
+        stream::unfold(ToggleState::Init, |state| async move {
+            match state {
+                ToggleState::Init => {
                     let path = "/tmp/narrative.sock";
                     let _ = std::fs::remove_file(path);
-                    match UnixListener::bind(path) {
-                        Ok(l) => l,
+                    match tokio::net::UnixListener::bind(path) {
+                        Ok(listener) => {
+                            Some((Message::Noop, ToggleState::Socket(listener)))
+                        }
+                        Err(e) => {
+                            tracing::warn!("socket bind failed ({}), falling back to SIGUSR1", e);
+                            Some((Message::Noop, ToggleState::Signal))
+                        }
+                    }
+                }
+
+                ToggleState::Socket(listener) => {
+                    use tokio::io::{AsyncBufReadExt, BufReader};
+                    match listener.accept().await {
+                        Ok((stream, _)) => {
+                            let mut lines = BufReader::new(stream).lines();
+                            if let Ok(Some(line)) = lines.next_line().await {
+                                if line.trim() == "toggle" {
+                                    return Some((Message::BarToggle, ToggleState::Socket(listener)));
+                                }
+                            }
+                            Some((Message::Noop, ToggleState::Socket(listener)))
+                        }
+                        Err(_) => Some((Message::Noop, ToggleState::Socket(listener))),
+                    }
+                }
+
+                ToggleState::Signal => {
+                    match tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::user_defined1(),
+                    ) {
+                        Ok(mut sig) => {
+                            sig.recv().await;
+                            Some((Message::BarToggle, ToggleState::Signal))
+                        }
                         Err(_) => {
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            return Some((Message::Noop, None));
+                            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                            Some((Message::Noop, ToggleState::Signal))
                         }
                     }
                 }
-            };
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let mut lines = BufReader::new(stream).lines();
-                    if let Ok(Some(line)) = lines.next_line().await {
-                        if line.trim() == "toggle" {
-                            return Some((Message::BarToggle, Some(listener)));
-                        }
-                    }
-                    Some((Message::Noop, Some(listener)))
-                }
-                Err(_) => Some((Message::Noop, Some(listener))),
             }
         }),
     )
