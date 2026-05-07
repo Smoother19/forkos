@@ -16,7 +16,7 @@ fn main() -> iced_layershell::Result {
         .subscription(Narrative::subscription)
         .settings(MainSettings {
             layer_settings: LayerShellSettings {
-                size: Some((0, 48)),
+                size: Some((0, 648)),  // 60% de 1080 — bureau ouvert au démarrage
                 anchor: Anchor::Bottom | Anchor::Left | Anchor::Right,
                 exclusive_zone: 48,
                 layer: Layer::Top,

@@ -6,7 +6,7 @@ pub mod bar;
 
 use crate::app::{Message, Narrative, BOTTOM_INPUT_ID};
 use forkos_shared::theme;
-use iced::widget::{column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Background, Border, Color, Element, Length, Padding};
 use std::sync::LazyLock;
 
@@ -20,7 +20,7 @@ pub fn render(state: &Narrative) -> Element<'_, Message> {
     }
 }
 
-/// État fermé : juste la barre de 48px
+/// État fermé : juste la barre 48px avec son champ texte intégré
 fn render_closed(state: &Narrative) -> Element<'_, Message> {
     container(bar::render(state))
         .width(Length::Fill)
@@ -32,10 +32,12 @@ fn render_closed(state: &Narrative) -> Element<'_, Message> {
         .into()
 }
 
-/// État ouvert : header + fil narratif + palette/input + barre en bas
+/// État ouvert : header → apps actives → fil → input shell → barre 48px
 fn render_open(state: &Narrative) -> Element<'_, Message> {
     let body = column![
         header::render(),
+        separator(),
+        active_apps_section(state),
         separator(),
         scrollable(entries_column(state))
             .height(Length::Fill)
@@ -56,6 +58,66 @@ fn render_open(state: &Narrative) -> Element<'_, Message> {
             ..Default::default()
         })
         .into()
+}
+
+/// Section apps actives : grille wrappée de cartes cliquables
+fn active_apps_section(state: &Narrative) -> Element<'_, Message> {
+    if state.active_windows.is_empty() {
+        return container(
+            text("aucune app active · tape > pour ouvrir une app")
+                .size(11)
+                .color(theme::MUTED),
+        )
+        .padding(Padding { top: 12.0, right: 24.0, bottom: 12.0, left: 24.0 })
+        .into();
+    }
+
+    let mut r = row![].spacing(8);
+
+    let mut windows: Vec<(&u64, &(String, String))> = state.active_windows.iter().collect();
+    windows.sort_by_key(|(id, _)| *id);
+
+    for (id, (app_id, title)) in windows {
+        let is_active = Some(*id) == state.active_window_id;
+        let label = if title.is_empty() { app_id.clone() } else { title.clone() };
+        let label = if label.len() > 24 { format!("{}…", &label[..23]) } else { label };
+        let sub = if app_id.len() > 18 { format!("{}…", &app_id[..17]) } else { app_id.clone() };
+
+        let bg = if is_active { theme::FOAM } else { theme::OVERLAY };
+        let fg = if is_active { theme::BASE } else { theme::TEXT };
+        let fg_sub = if is_active { theme::BASE } else { theme::MUTED };
+        let cmd = format!("niri msg action focus-window --id {}", id);
+
+        let card = button(
+            column![
+                text(label).size(12).color(fg),
+                text(sub).size(9).color(fg_sub),
+            ]
+            .spacing(2),
+        )
+        .padding(Padding { top: 8.0, right: 12.0, bottom: 8.0, left: 12.0 })
+        .on_press(Message::ContextAction(cmd))
+        .style(move |_, _| button::Style {
+            background: Some(Background::Color(bg)),
+            border: Border { radius: 6.0.into(), ..Default::default() },
+            text_color: fg,
+            shadow: Default::default(),
+        });
+
+        r = r.push(card);
+    }
+
+    let label_row = text(format!("APPS ACTIVES · {}", state.active_windows.len()))
+        .size(9)
+        .color(theme::MUTED);
+
+    container(
+        column![label_row, r.wrap()].spacing(6),
+    )
+    .padding(Padding { top: 14.0, right: 24.0, bottom: 14.0, left: 24.0 })
+    .max_width(720)
+    .center_x(Length::Fill)
+    .into()
 }
 
 fn entries_column(state: &Narrative) -> Element<'_, Message> {
@@ -128,7 +190,6 @@ pub fn separator() -> Element<'static, Message> {
         .into()
 }
 
-/// Bloc avec border-left coloré (row: [bande 2px | contenu])
 pub fn left_border_block<'a>(
     content: Element<'a, Message>,
     border_color: Color,

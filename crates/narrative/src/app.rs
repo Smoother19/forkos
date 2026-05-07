@@ -1,10 +1,11 @@
-use crate::entry::{Entry, EntryKind, NotifItem, ContextAction};
+use crate::entry::{Entry, EntryKind};
 use crate::mpris;
 use crate::store;
 use crate::view;
 use forkos_shared::command::{system_commands, Command};
 use forkos_shared::mode::Mode;
 use forkos_shared::search;
+use forkos_shared::shell;
 use forkos_shared::sources;
 use iced::keyboard::{self, key};
 use iced::widget::{scrollable, text_input};
@@ -15,6 +16,7 @@ use std::sync::LazyLock;
 
 pub static BOTTOM_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 pub static PALETTE_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
+pub static BAR_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 
 #[derive(Debug, Clone)]
 pub enum NiriWindowEvent {
@@ -64,6 +66,7 @@ pub enum Message {
     FeedScrolled(scrollable::Viewport),
     BarToggle,
     ScreenGeometry(u32, u32),
+    ShellExecuted(shell::ShellEntry),
     Noop,
 }
 
@@ -80,7 +83,6 @@ impl Narrative {
                 entries.push(e);
             }
         }
-        entries.extend(demo_entries());
 
         let commands = system_commands();
         let palette_filtered = search::filter_and_sort(&commands, Mode::Universal, "");
@@ -101,7 +103,7 @@ impl Narrative {
             scroll_at_bottom: true,
             active_windows: HashMap::new(),
             active_window_id: None,
-            bar_open: false,
+            bar_open: true,
             screen_height: 1080,
         };
 
@@ -212,10 +214,51 @@ impl Narrative {
             }
 
             Message::BottomInputSubmit => {
-                let query = self.bottom_query.trim().to_string();
-                if !query.is_empty() {
-                    self.add_entry(EntryKind::System { message: query });
-                    self.bottom_query.clear();
+                let raw = self.bottom_query.trim().to_string();
+                if raw.is_empty() {
+                    return Task::none();
+                }
+                self.bottom_query.clear();
+
+                if let Some(rest) = raw.strip_prefix('$') {
+                    let cmd = rest.trim().to_string();
+                    if cmd.is_empty() {
+                        return Task::none();
+                    }
+                    self.add_entry(EntryKind::Shell {
+                        command: cmd.clone(),
+                        output_preview: "(exécution…)".to_string(),
+                        exit_code: -1,
+                    });
+                    let snap = self.snap_if_at_bottom();
+                    return Task::batch([
+                        Task::perform(shell::execute(cmd), Message::ShellExecuted),
+                        snap,
+                    ]);
+                }
+
+                if let Some(rest) = raw.strip_prefix('>') {
+                    let q = rest.trim().to_string();
+                    self.palette_open = true;
+                    self.palette_query = q;
+                    self.palette_selected = 0;
+                    self.recompute_palette();
+                    return text_input::focus(PALETTE_INPUT_ID.clone());
+                }
+
+                self.add_entry(EntryKind::System { message: raw });
+                self.snap_if_at_bottom()
+            }
+
+            Message::ShellExecuted(entry) => {
+                if let Some(last) = self.entries.iter_mut().rev().find(|e| {
+                    matches!(&e.kind, EntryKind::Shell { exit_code: -1, .. })
+                }) {
+                    last.kind = EntryKind::Shell {
+                        command: entry.command.clone(),
+                        output_preview: truncate_output(&entry.output, 12),
+                        exit_code: if entry.success { 0 } else { 1 },
+                    };
                 }
                 self.snap_if_at_bottom()
             }
@@ -375,6 +418,16 @@ impl Narrative {
     }
 }
 
+fn truncate_output(out: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = out.lines().collect();
+    if lines.len() <= max_lines {
+        out.to_string()
+    } else {
+        let kept: Vec<&str> = lines.iter().take(max_lines).copied().collect();
+        format!("{}\n… ({} lignes en plus)", kept.join("\n"), lines.len() - max_lines)
+    }
+}
+
 fn keyboard_subscription() -> Subscription<Message> {
     keyboard::on_key_press(|key, modifiers| {
         let ctrl_k = modifiers.control()
@@ -392,7 +445,6 @@ fn keyboard_subscription() -> Subscription<Message> {
     })
 }
 
-// Écoute SIGUSR1 envoyé par le keybind niri pour toggler la barre
 fn signal_subscription() -> Subscription<Message> {
     use iced::futures::stream;
 
@@ -550,85 +602,6 @@ fn spawn_exec(exec: &str) {
     }
 }
 
-fn demo_entries() -> Vec<Entry> {
-    use chrono::{Duration, Local};
-
-    let now = Local::now();
-
-    vec![
-        Entry {
-            id: 1000,
-            timestamp: now - Duration::minutes(45),
-            kind: EntryKind::AppLaunched {
-                name: "firefox".to_string(),
-                detail: "navigateur · flatpak".to_string(),
-                icon: "🌐".to_string(),
-                duration: Some(720),
-            },
-        },
-        Entry {
-            id: 1001,
-            timestamp: now - Duration::minutes(30),
-            kind: EntryKind::Media {
-                title: "Discovery".to_string(),
-                artist: "Daft Punk".to_string(),
-                progress_secs: 134,
-                duration_secs: 360,
-                playing: true,
-            },
-        },
-        Entry {
-            id: 1002,
-            timestamp: now - Duration::minutes(20),
-            kind: EntryKind::Notifications {
-                source: "mails".to_string(),
-                count: 3,
-                items: vec![
-                    NotifItem {
-                        sender: "marc.l@labo".to_string(),
-                        preview: "retour sur le proto immuable, j'ai testé ta branche..."
-                            .to_string(),
-                        actions: vec![
-                            ContextAction {
-                                label: "lire".to_string(),
-                                command: "xdg-open mailto:marc.l@labo".to_string(),
-                            },
-                            ContextAction {
-                                label: "répondre".to_string(),
-                                command: "xdg-open mailto:marc.l@labo".to_string(),
-                            },
-                        ],
-                    },
-                    NotifItem {
-                        sender: "github notifications".to_string(),
-                        preview: "3 PR mergées sur forkos/core".to_string(),
-                        actions: vec![ContextAction {
-                            label: "voir".to_string(),
-                            command: "xdg-open https://github.com/notifications".to_string(),
-                        }],
-                    },
-                ],
-            },
-        },
-        Entry {
-            id: 1003,
-            timestamp: now - Duration::minutes(10),
-            kind: EntryKind::FileEdit {
-                path: "~/project/forkos/crates/narrative/src/app.rs".to_string(),
-                lines: 142,
-                preview: "pub struct Narrative {\n    pub entries: Vec<Entry>,\n    pub session_id: String,".to_string(),
-                modified_ago: "il y a 10 min".to_string(),
-            },
-        },
-        Entry {
-            id: 1004,
-            timestamp: now - Duration::minutes(5),
-            kind: EntryKind::Shell {
-                command: "cargo build --release -p narrative".to_string(),
-                output_preview: "   Compiling narrative v0.1.0\n   Finished release [optimized]"
-                    .to_string(),
-                exit_code: 0,
-            },
-        },
-    ]
-}
+// Unused but kept for completeness — narrative n'a pas de demo data
+#[allow(dead_code)]
+fn _demo_entries_removed() {}
