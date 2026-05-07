@@ -3,14 +3,12 @@ mod entry_view;
 mod header;
 mod palette_inline;
 pub mod bar;
+pub mod terminal;
 
-use crate::app::{Message, Narrative, BOTTOM_INPUT_ID};
+use crate::app::{Message, Narrative};
 use forkos_shared::theme;
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{Background, Border, Color, Element, Length, Padding};
-use std::sync::LazyLock;
-
-pub static FEED_SCROLL_ID: LazyLock<scrollable::Id> = LazyLock::new(scrollable::Id::unique);
 
 pub fn render(state: &Narrative) -> Element<'_, Message> {
     if state.bar_open {
@@ -20,7 +18,7 @@ pub fn render(state: &Narrative) -> Element<'_, Message> {
     }
 }
 
-/// État fermé : juste la barre 48px avec son champ texte intégré
+/// État fermé : uniquement la barre 48px
 fn render_closed(state: &Narrative) -> Element<'_, Message> {
     container(bar::render(state))
         .width(Length::Fill)
@@ -32,7 +30,7 @@ fn render_closed(state: &Narrative) -> Element<'_, Message> {
         .into()
 }
 
-/// État ouvert : header → apps actives (si présentes) → fil → input shell → barre 48px
+/// État ouvert : header → apps (si présentes) → terminal PTY (ou palette) → barre 48px
 fn render_open(state: &Narrative) -> Element<'_, Message> {
     let mut body = column![];
 
@@ -44,14 +42,22 @@ fn render_open(state: &Narrative) -> Element<'_, Message> {
         body = body.push(separator());
     }
 
-    body = body.push(
-        scrollable(entries_column(state))
-            .height(Length::Fill)
-            .id(FEED_SCROLL_ID.clone())
-            .on_scroll(Message::FeedScrolled),
-    );
-    body = body.push(separator());
-    body = body.push(bottom_bar(state));
+    // Zone centrale : palette inline si ouverte, sinon terminal PTY
+    if state.palette_open {
+        body = body.push(
+            container(palette_inline::render(state))
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .padding(Padding { top: 0.0, right: 24.0, bottom: 0.0, left: 24.0 })
+                .style(|_| container::Style {
+                    background: Some(Background::Color(theme::BASE)),
+                    ..Default::default()
+                }),
+        );
+    } else {
+        body = body.push(terminal::render(state));
+    }
+
     body = body.push(separator());
     body = body.push(bar::render(state));
 
@@ -65,18 +71,8 @@ fn render_open(state: &Narrative) -> Element<'_, Message> {
         .into()
 }
 
-/// Section apps actives : grille wrappée de cartes cliquables
+/// Section apps actives : grille de cartes cliquables (uniquement si non vide)
 fn active_apps_section(state: &Narrative) -> Element<'_, Message> {
-    if state.active_windows.is_empty() {
-        return container(
-            text("aucune app active · tape > pour ouvrir une app")
-                .size(11)
-                .color(theme::MUTED),
-        )
-        .padding(Padding { top: 12.0, right: 24.0, bottom: 12.0, left: 24.0 })
-        .into();
-    }
-
     let mut r = row![].spacing(8);
 
     let mut windows: Vec<(&u64, &(String, String))> = state.active_windows.iter().collect();
@@ -116,74 +112,11 @@ fn active_apps_section(state: &Narrative) -> Element<'_, Message> {
         .size(9)
         .color(theme::MUTED);
 
-    container(
-        column![label_row, r.wrap()].spacing(6),
-    )
-    .padding(Padding { top: 14.0, right: 24.0, bottom: 14.0, left: 24.0 })
-    .max_width(720)
-    .center_x(Length::Fill)
-    .into()
-}
-
-fn entries_column(state: &Narrative) -> Element<'_, Message> {
-    let mut col = column![].spacing(4);
-
-    for entry in &state.entries {
-        col = col.push(entry_view::render(entry));
-    }
-
-    col = col.push(Space::new(Length::Fill, Length::Fixed(32.0)));
-
-    container(col)
-        .max_width(600)
-        .padding(Padding { top: 20.0, right: 24.0, bottom: 8.0, left: 24.0 })
+    container(column![label_row, r.wrap()].spacing(6))
+        .padding(Padding { top: 14.0, right: 24.0, bottom: 14.0, left: 24.0 })
+        .max_width(720)
         .center_x(Length::Fill)
         .into()
-}
-
-fn bottom_bar(state: &Narrative) -> Element<'_, Message> {
-    let inner: Element<'_, Message> = if state.palette_open {
-        palette_inline::render(state)
-    } else {
-        plain_input(state)
-    };
-
-    container(
-        container(inner)
-            .max_width(600)
-            .center_x(Length::Fill)
-            .padding(Padding { top: 0.0, right: 24.0, bottom: 0.0, left: 24.0 }),
-    )
-    .width(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(Background::Color(theme::BASE)),
-        ..Default::default()
-    })
-    .into()
-}
-
-fn plain_input(state: &Narrative) -> Element<'_, Message> {
-    let prompt_row = row![
-        text("›").size(14).color(theme::FOAM),
-        text_input("", &state.bottom_query)
-            .id(BOTTOM_INPUT_ID.clone())
-            .on_input(Message::BottomInputChanged)
-            .on_submit(Message::BottomInputSubmit)
-            .padding(0)
-            .size(13)
-            .style(|_, _| iced::widget::text_input::Style {
-                background: Background::Color(Color::TRANSPARENT),
-                border: Border::default(),
-                icon: theme::TEXT,
-                placeholder: theme::MUTED,
-                value: theme::TEXT,
-                selection: theme::HIGHLIGHT_MED,
-            }),
-    ]
-    .spacing(8)
-    .padding(Padding { top: 14.0, right: 0.0, bottom: 14.0, left: 0.0 });
-
-    prompt_row.into()
 }
 
 pub fn separator() -> Element<'static, Message> {

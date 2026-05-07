@@ -1,6 +1,7 @@
 mod app;
 mod entry;
 mod mpris;
+mod pty;
 mod store;
 mod view;
 

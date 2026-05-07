@@ -1,21 +1,27 @@
 use crate::entry::{Entry, EntryKind};
 use crate::mpris;
+use crate::pty;
 use crate::store;
 use crate::view;
 use forkos_shared::command::{system_commands, Command};
 use forkos_shared::mode::Mode;
 use forkos_shared::search;
-use forkos_shared::shell;
 use forkos_shared::sources;
 use iced::keyboard::{self, key};
 use iced::widget::{scrollable, text_input};
 use iced::{Element, Subscription, Task};
 use iced_layershell::to_layer_message;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::LazyLock;
 
 pub static BOTTOM_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 pub static PALETTE_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
+pub static TERMINAL_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
+
+/// Writer global vers le stdin PTY — accessible depuis n'importe quelle branche update()
+pub static PTY_WRITER: LazyLock<std::sync::Mutex<Option<Box<dyn Write + Send>>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
 
 #[derive(Debug, Clone)]
 pub enum NiriWindowEvent {
@@ -32,16 +38,17 @@ pub struct Narrative {
     pub palette_query: String,
     pub palette_filtered: Vec<Command>,
     pub palette_selected: usize,
-    pub bottom_query: String,
     pub sources_loaded: bool,
     pub current_media: Option<mpris::MediaInfo>,
     pub mpris_player: Option<String>,
     pub media_entry_idx: Option<usize>,
-    pub scroll_at_bottom: bool,
     pub active_windows: HashMap<u64, (String, String)>,
     pub active_window_id: Option<u64>,
     pub bar_open: bool,
     pub screen_height: u32,
+    // PTY
+    pub pty_lines: Vec<pty::PtyLine>,
+    pub pty_input: String,
 }
 
 #[to_layer_message]
@@ -53,8 +60,6 @@ pub enum Message {
     PaletteSelectPrevious,
     PaletteExecute,
     PaletteCancel,
-    BottomInputChanged(String),
-    BottomInputSubmit,
     SourcesLoaded(sources::LoadedSources),
     ContextAction(String),
     NiriEvent(NiriWindowEvent),
@@ -62,10 +67,12 @@ pub enum Message {
     MediaUpdate(Option<mpris::MediaInfo>),
     MediaCommand(mpris::MediaCommand),
     MprisUnavailable,
-    FeedScrolled(scrollable::Viewport),
     BarToggle,
     ScreenGeometry(u32, u32),
-    ShellExecuted(shell::ShellEntry),
+    PtyOutput(String),
+    PtyInput(String),
+    PtyInputChanged(String),
+    PtySubmit,
     Noop,
 }
 
@@ -94,21 +101,21 @@ impl Narrative {
             palette_query: String::new(),
             palette_filtered,
             palette_selected: 0,
-            bottom_query: String::new(),
             sources_loaded: false,
             current_media: None,
             mpris_player: None,
             media_entry_idx: None,
-            scroll_at_bottom: true,
             active_windows: HashMap::new(),
             active_window_id: None,
             bar_open: true,
             screen_height: 1080,
+            pty_lines: Vec::new(),
+            pty_input: String::new(),
         };
 
         let tasks = Task::batch([
             Task::perform(sources::load_all(), Message::SourcesLoaded),
-            text_input::focus(BOTTOM_INPUT_ID.clone()),
+            text_input::focus(TERMINAL_INPUT_ID.clone()),
         ]);
 
         (state, tasks)
@@ -123,7 +130,13 @@ impl Narrative {
                 } else {
                     48
                 };
-                Task::done(Message::SizeChange((0, new_height)))
+                let size_task = Task::done(Message::SizeChange((0, new_height)));
+                let focus_task = if self.bar_open {
+                    text_input::focus(TERMINAL_INPUT_ID.clone())
+                } else {
+                    text_input::focus(BOTTOM_INPUT_ID.clone())
+                };
+                Task::batch([size_task, focus_task])
             }
 
             Message::ScreenGeometry(_w, h) => {
@@ -135,7 +148,7 @@ impl Narrative {
                 if self.palette_open {
                     self.palette_open = false;
                     self.palette_query.clear();
-                    text_input::focus(BOTTOM_INPUT_ID.clone())
+                    text_input::focus(TERMINAL_INPUT_ID.clone())
                 } else {
                     self.palette_open = true;
                     self.palette_query.clear();
@@ -188,8 +201,7 @@ impl Narrative {
                     }
                     self.palette_open = false;
                     self.palette_query.clear();
-                    let snap = self.snap_if_at_bottom();
-                    return Task::batch([text_input::focus(BOTTOM_INPUT_ID.clone()), snap]);
+                    return text_input::focus(TERMINAL_INPUT_ID.clone());
                 }
                 Task::none()
             }
@@ -198,70 +210,62 @@ impl Narrative {
                 if self.palette_open {
                     self.palette_open = false;
                     self.palette_query.clear();
-                    return text_input::focus(BOTTOM_INPUT_ID.clone());
+                    return text_input::focus(TERMINAL_INPUT_ID.clone());
                 }
                 if self.bar_open {
                     self.bar_open = false;
-                    return Task::done(Message::SizeChange((0, 48)));
+                    return Task::batch([
+                        Task::done(Message::SizeChange((0, 48))),
+                        text_input::focus(BOTTOM_INPUT_ID.clone()),
+                    ]);
                 }
                 Task::none()
             }
 
-            Message::BottomInputChanged(q) => {
-                self.bottom_query = q;
+            Message::PtyOutput(chunk) => {
+                let new_lines = pty::parse_ansi(&chunk);
+                self.pty_lines.extend(new_lines);
+                if self.pty_lines.len() > 5000 {
+                    self.pty_lines.drain(0..self.pty_lines.len() - 5000);
+                }
+                scrollable::snap_to(
+                    view::terminal::TERMINAL_SCROLL.clone(),
+                    scrollable::RelativeOffset { x: 0.0, y: 1.0 },
+                )
+            }
+
+            Message::PtyInput(s) => {
+                if let Ok(mut w) = PTY_WRITER.lock() {
+                    if let Some(writer) = w.as_mut() {
+                        let _ = writer.write_all(s.as_bytes());
+                    }
+                }
                 Task::none()
             }
 
-            Message::BottomInputSubmit => {
-                let raw = self.bottom_query.trim().to_string();
-                if raw.is_empty() {
-                    return Task::none();
-                }
-                self.bottom_query.clear();
-
-                // Préfixe > → palette
-                if let Some(rest) = raw.strip_prefix('>') {
-                    let q = rest.trim().to_string();
-                    self.palette_open = true;
-                    self.palette_query = q;
-                    self.palette_selected = 0;
-                    self.recompute_palette();
-                    return text_input::focus(PALETTE_INPUT_ID.clone());
-                }
-
-                // Préfixe $ → shell explicite ; pas de préfixe → shell implicite
-                let cmd = raw
-                    .strip_prefix('$')
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or(raw.clone());
-
-                if cmd.is_empty() {
-                    return Task::none();
-                }
-
-                self.add_entry(EntryKind::Shell {
-                    command: cmd.clone(),
-                    output_preview: "…".to_string(),
-                    exit_code: -1,
-                });
-                let snap = self.snap_if_at_bottom();
-                Task::batch([
-                    Task::perform(shell::execute(cmd), Message::ShellExecuted),
-                    snap,
-                ])
+            Message::PtyInputChanged(s) => {
+                self.pty_input = s;
+                Task::none()
             }
 
-            Message::ShellExecuted(entry) => {
-                if let Some(last) = self.entries.iter_mut().rev().find(|e| {
-                    matches!(&e.kind, EntryKind::Shell { exit_code: -1, .. })
-                }) {
-                    last.kind = EntryKind::Shell {
-                        command: entry.command.clone(),
-                        output_preview: truncate_output(&entry.output, 12),
-                        exit_code: if entry.success { 0 } else { 1 },
-                    };
+            Message::PtySubmit => {
+                let line = format!("{}\n", self.pty_input.trim());
+                self.pty_input.clear();
+                if let Ok(mut w) = PTY_WRITER.lock() {
+                    if let Some(writer) = w.as_mut() {
+                        let _ = writer.write_all(line.as_bytes());
+                    }
                 }
-                self.snap_if_at_bottom()
+                // Auto-ouvre le menu pour voir la sortie
+                if !self.bar_open {
+                    self.bar_open = true;
+                    let height = (self.screen_height as f32 * 0.6) as u32;
+                    return Task::batch([
+                        Task::done(Message::SizeChange((0, height))),
+                        text_input::focus(TERMINAL_INPUT_ID.clone()),
+                    ]);
+                }
+                Task::none()
             }
 
             Message::SourcesLoaded(loaded) => {
@@ -289,7 +293,7 @@ impl Narrative {
                         icon: String::new(),
                         duration: None,
                     });
-                    self.snap_if_at_bottom()
+                    Task::none()
                 }
                 NiriWindowEvent::Closed { id } => {
                     if let Some((app_id, _)) = self.active_windows.remove(&id) {
@@ -297,7 +301,7 @@ impl Narrative {
                             message: format!("fermé : {}", app_id),
                         });
                     }
-                    self.snap_if_at_bottom()
+                    Task::none()
                 }
                 NiriWindowEvent::Focused { id } => {
                     self.active_window_id = id;
@@ -324,22 +328,18 @@ impl Narrative {
                             playing: info.playing,
                         };
 
-                        let snap = if track_changed {
+                        if track_changed {
                             self.add_entry(kind);
                             self.media_entry_idx = self.entries.len().checked_sub(1);
-                            self.snap_if_at_bottom()
-                        } else {
-                            if let Some(idx) = self.media_entry_idx {
-                                if let Some(e) = self.entries.get_mut(idx) {
-                                    e.kind = kind;
-                                }
+                        } else if let Some(idx) = self.media_entry_idx {
+                            if let Some(e) = self.entries.get_mut(idx) {
+                                e.kind = kind;
                             }
-                            Task::none()
-                        };
+                        }
 
                         self.mpris_player = Some(info.service.clone());
                         self.current_media = Some(info);
-                        snap
+                        Task::none()
                     }
                     None => {
                         self.mpris_player = None;
@@ -365,14 +365,9 @@ impl Narrative {
 
             Message::MprisUnavailable => Task::none(),
 
-            Message::FeedScrolled(viewport) => {
-                self.scroll_at_bottom = viewport.relative_offset().y >= 0.99;
-                Task::none()
-            }
-
             Message::Noop => Task::none(),
 
-            // Variants ajoutées par #[to_layer_message] — interceptées par le runtime
+            // Variants générées par #[to_layer_message]
             _ => Task::none(),
         }
     }
@@ -386,7 +381,8 @@ impl Narrative {
             keyboard_subscription(),
             niri_subscription(),
             mpris_subscription(),
-            signal_subscription(),
+            socket_subscription(),
+            pty_subscription(),
         ])
     }
 
@@ -405,27 +401,6 @@ impl Narrative {
         if let Some(e) = store::append(kind, &self.session_id) {
             self.entries.push(e);
         }
-    }
-
-    fn snap_if_at_bottom(&self) -> Task<Message> {
-        if self.scroll_at_bottom {
-            scrollable::snap_to(
-                view::FEED_SCROLL_ID.clone(),
-                scrollable::RelativeOffset { x: 0.0, y: 1.0 },
-            )
-        } else {
-            Task::none()
-        }
-    }
-}
-
-fn truncate_output(out: &str, max_lines: usize) -> String {
-    let lines: Vec<&str> = out.lines().collect();
-    if lines.len() <= max_lines {
-        out.to_string()
-    } else {
-        let kept: Vec<&str> = lines.iter().take(max_lines).copied().collect();
-        format!("{}\n… ({} lignes en plus)", kept.join("\n"), lines.len() - max_lines)
     }
 }
 
@@ -446,30 +421,74 @@ fn keyboard_subscription() -> Subscription<Message> {
     })
 }
 
-fn signal_subscription() -> Subscription<Message> {
+/// Écoute sur /tmp/narrative.sock — niri envoie "toggle\n" via socat
+fn socket_subscription() -> Subscription<Message> {
+    use iced::futures::stream;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::net::UnixListener;
+
+    Subscription::run_with_id(
+        "socket-toggle",
+        stream::unfold(None::<UnixListener>, |state| async move {
+            let listener = match state {
+                Some(l) => l,
+                None => {
+                    let path = "/tmp/narrative.sock";
+                    let _ = std::fs::remove_file(path);
+                    match UnixListener::bind(path) {
+                        Ok(l) => l,
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            return Some((Message::Noop, None));
+                        }
+                    }
+                }
+            };
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let mut lines = BufReader::new(stream).lines();
+                    if let Ok(Some(line)) = lines.next_line().await {
+                        if line.trim() == "toggle" {
+                            return Some((Message::BarToggle, Some(listener)));
+                        }
+                    }
+                    Some((Message::Noop, Some(listener)))
+                }
+                Err(_) => Some((Message::Noop, Some(listener))),
+            }
+        }),
+    )
+}
+
+/// Spawne le PTY au premier appel, lit le stdout en continu
+fn pty_subscription() -> Subscription<Message> {
     use iced::futures::stream;
 
     Subscription::run_with_id(
-        "sigusr1-toggle",
+        "pty-output",
         stream::unfold(
-            None::<tokio::signal::unix::Signal>,
+            None::<tokio::sync::mpsc::UnboundedReceiver<String>>,
             |state| async move {
-                let mut sig = match state {
-                    Some(s) => s,
+                let mut rx = match state {
+                    Some(rx) => rx,
                     None => {
-                        match tokio::signal::unix::signal(
-                            tokio::signal::unix::SignalKind::user_defined1(),
-                        ) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                std::future::pending::<()>().await;
-                                unreachable!()
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::pty::spawn_pty(200, 50, tx)
+                        })
+                        .await;
+                        if let Ok(Ok(writer)) = result {
+                            if let Ok(mut w) = PTY_WRITER.lock() {
+                                *w = Some(writer);
                             }
                         }
+                        rx
                     }
                 };
-                sig.recv().await;
-                Some((Message::BarToggle, Some(sig)))
+                match rx.recv().await {
+                    Some(chunk) => Some((Message::PtyOutput(chunk), Some(rx))),
+                    None => None,
+                }
             },
         ),
     )
@@ -602,7 +621,3 @@ fn spawn_exec(exec: &str) {
         let _ = std::process::Command::new(prog).args(&parts[1..]).spawn();
     }
 }
-
-// Unused but kept for completeness — narrative n'a pas de demo data
-#[allow(dead_code)]
-fn _demo_entries_removed() {}

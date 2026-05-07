@@ -65,8 +65,8 @@ spawn-at-startup "narrative"
 binds {
     // ── Shell narratif forkOS ──────────────────────────────────
     // F20 est émis par keyd quand Super est tapé seul (sans autre touche)
-    // pkill -USR1 envoie SIGUSR1 au binaire narrative pour toggler la barre
-    F20 { spawn "sh" "-c" "pkill -USR1 narrative"; }
+    // narrative écoute sur /tmp/narrative.sock — socat doit être installé
+    F20 { spawn "sh" "-c" "echo toggle | socat - UNIX-CONNECT:/tmp/narrative.sock"; }
     Mod+Space { spawn "palette"; }  // palette standalone en fallback
 
     // ── Terminal ───────────────────────────────────────────────

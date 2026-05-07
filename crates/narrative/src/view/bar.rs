@@ -23,10 +23,11 @@ pub fn render(state: &Narrative) -> Element<'_, Message> {
         shadow: Default::default(),
     });
 
-    let shell_input = text_input("$ tape une commande...", &state.bottom_query)
+    let shell_input = text_input("$ tape une commande...", &state.pty_input)
         .id(BOTTOM_INPUT_ID.clone())
-        .on_input(Message::BottomInputChanged)
-        .on_submit(Message::BottomInputSubmit)
+        .on_input(Message::PtyInputChanged)
+        .on_submit(Message::PtySubmit)
+        .font(iced::Font::MONOSPACE)
         .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
         .size(12)
         .style(|_, _| iced::widget::text_input::Style {

@@ -19,3 +19,4 @@ tracing-subscriber = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 zbus = { version = "4", features = ["tokio"] }
 forkos-shared = { path = "../shared" }
+portable-pty = "0.8"
