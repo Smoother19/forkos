@@ -32,25 +32,30 @@ fn render_closed(state: &Narrative) -> Element<'_, Message> {
         .into()
 }
 
-/// État ouvert : header → apps actives → fil → input shell → barre 48px
+/// État ouvert : header → apps actives (si présentes) → fil → input shell → barre 48px
 fn render_open(state: &Narrative) -> Element<'_, Message> {
-    let body = column![
-        header::render(),
-        separator(),
-        active_apps_section(state),
-        separator(),
+    let mut body = column![];
+
+    body = body.push(header::render());
+    body = body.push(separator());
+
+    if !state.active_windows.is_empty() {
+        body = body.push(active_apps_section(state));
+        body = body.push(separator());
+    }
+
+    body = body.push(
         scrollable(entries_column(state))
             .height(Length::Fill)
             .id(FEED_SCROLL_ID.clone())
             .on_scroll(Message::FeedScrolled),
-        separator(),
-        bottom_bar(state),
-        separator(),
-        bar::render(state),
-    ]
-    .height(Length::Fill);
+    );
+    body = body.push(separator());
+    body = body.push(bottom_bar(state));
+    body = body.push(separator());
+    body = body.push(bar::render(state));
 
-    container(body)
+    container(body.height(Length::Fill))
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_| container::Style {

@@ -16,7 +16,6 @@ use std::sync::LazyLock;
 
 pub static BOTTOM_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 pub static PALETTE_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
-pub static BAR_INPUT_ID: LazyLock<text_input::Id> = LazyLock::new(text_input::Id::unique);
 
 #[derive(Debug, Clone)]
 pub enum NiriWindowEvent {
@@ -220,23 +219,7 @@ impl Narrative {
                 }
                 self.bottom_query.clear();
 
-                if let Some(rest) = raw.strip_prefix('$') {
-                    let cmd = rest.trim().to_string();
-                    if cmd.is_empty() {
-                        return Task::none();
-                    }
-                    self.add_entry(EntryKind::Shell {
-                        command: cmd.clone(),
-                        output_preview: "(exécution…)".to_string(),
-                        exit_code: -1,
-                    });
-                    let snap = self.snap_if_at_bottom();
-                    return Task::batch([
-                        Task::perform(shell::execute(cmd), Message::ShellExecuted),
-                        snap,
-                    ]);
-                }
-
+                // Préfixe > → palette
                 if let Some(rest) = raw.strip_prefix('>') {
                     let q = rest.trim().to_string();
                     self.palette_open = true;
@@ -246,8 +229,26 @@ impl Narrative {
                     return text_input::focus(PALETTE_INPUT_ID.clone());
                 }
 
-                self.add_entry(EntryKind::System { message: raw });
-                self.snap_if_at_bottom()
+                // Préfixe $ → shell explicite ; pas de préfixe → shell implicite
+                let cmd = raw
+                    .strip_prefix('$')
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or(raw.clone());
+
+                if cmd.is_empty() {
+                    return Task::none();
+                }
+
+                self.add_entry(EntryKind::Shell {
+                    command: cmd.clone(),
+                    output_preview: "…".to_string(),
+                    exit_code: -1,
+                });
+                let snap = self.snap_if_at_bottom();
+                Task::batch([
+                    Task::perform(shell::execute(cmd), Message::ShellExecuted),
+                    snap,
+                ])
             }
 
             Message::ShellExecuted(entry) => {
