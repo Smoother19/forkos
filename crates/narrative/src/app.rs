@@ -115,9 +115,26 @@ impl Narrative {
             pty_input: String::new(),
         };
 
+        let foot_warning = {
+            let ok = std::process::Command::new("which")
+                .arg("foot")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !ok {
+                Task::done(Message::PtyOutput(
+                    "\x1b[33m[forkOS] foot non trouvé — nano/vim/htop seront ouverts avec xterm\x1b[0m\n"
+                        .to_string(),
+                ))
+            } else {
+                Task::none()
+            }
+        };
+
         let tasks = Task::batch([
             Task::perform(sources::load_all(), Message::SourcesLoaded),
             text_input::focus(BOTTOM_INPUT_ID.clone()),
+            foot_warning,
         ]);
 
         (state, tasks)
@@ -205,12 +222,30 @@ impl Narrative {
                     duration: None,
                 });
 
-                // Lance via PTY pour que la sortie apparaisse dans le terminal
                 if let Some(exec) = &cmd.exec {
-                    let input = format!("{}\n", exec);
-                    if let Ok(mut guard) = PTY_WRITER.lock() {
-                        if let Some(w) = guard.as_mut() {
-                            let _ = w.write_all(input.as_bytes());
+                    if is_tui_app(exec) {
+                        let terminal_cmd = format!(
+                            "(foot sh -c {} 2>/dev/null || xterm -e sh -c {}) &",
+                            shell_quote(exec),
+                            shell_quote(exec)
+                        );
+                        let _ = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg(&terminal_cmd)
+                            .spawn();
+                    } else if is_gui_app(exec) {
+                        let to_send = format!("{} &>/dev/null &\n", exec.trim());
+                        if let Ok(mut guard) = PTY_WRITER.lock() {
+                            if let Some(w) = guard.as_mut() {
+                                let _ = w.write_all(to_send.as_bytes());
+                            }
+                        }
+                    } else {
+                        let to_send = format!("{}\n", exec);
+                        if let Ok(mut guard) = PTY_WRITER.lock() {
+                            if let Some(w) = guard.as_mut() {
+                                let _ = w.write_all(to_send.as_bytes());
+                            }
                         }
                     }
                 }
@@ -283,11 +318,49 @@ impl Narrative {
                     Task::none()
                 };
 
-                // Envoie au PTY — vide → \n (prompt frais), sinon commande + \n
-                let to_send = format!("{}\n", line);
-                if let Ok(mut guard) = PTY_WRITER.lock() {
-                    if let Some(w) = guard.as_mut() {
-                        let _ = w.write_all(to_send.as_bytes());
+                if line.is_empty() {
+                    // Entrée vide → prompt frais
+                    if let Ok(mut guard) = PTY_WRITER.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(b"\n");
+                        }
+                    }
+                } else if is_tui_app(&line) {
+                    // TUI → terminal externe (foot ou xterm)
+                    let terminal_cmd = format!(
+                        "(foot sh -c {} 2>/dev/null || xterm -e sh -c {}) &",
+                        shell_quote(&line),
+                        shell_quote(&line)
+                    );
+                    let _ = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(&terminal_cmd)
+                        .spawn();
+                    let app_name = line.split_whitespace().next().unwrap_or("").to_string();
+                    let feedback = format!("echo '→ {} ouvert dans un terminal externe'\n", app_name);
+                    if let Ok(mut guard) = PTY_WRITER.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(feedback.as_bytes());
+                        }
+                    }
+                } else if is_gui_app(&line) {
+                    // GUI → background détaché, stderr silencé
+                    let to_send = format!(
+                        "{} &>/dev/null &\n",
+                        line.trim_end_matches('&').trim()
+                    );
+                    if let Ok(mut guard) = PTY_WRITER.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(to_send.as_bytes());
+                        }
+                    }
+                } else {
+                    // Commande normale → PTY direct
+                    let to_send = format!("{}\n", line);
+                    if let Ok(mut guard) = PTY_WRITER.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(to_send.as_bytes());
+                        }
                     }
                 }
 
@@ -308,7 +381,10 @@ impl Narrative {
 
             Message::ContextAction(cmd) => {
                 if !cmd.is_empty() {
-                    spawn_exec(&cmd);
+                    let parts: Vec<&str> = cmd.split_whitespace().collect();
+                    if let Some(prog) = parts.first() {
+                        let _ = std::process::Command::new(prog).args(&parts[1..]).spawn();
+                    }
                 }
                 Task::none()
             }
@@ -637,9 +713,51 @@ fn parse_niri_event(line: &str) -> Option<NiriWindowEvent> {
     None
 }
 
-fn spawn_exec(exec: &str) {
-    let parts: Vec<&str> = exec.split_whitespace().collect();
-    if let Some(prog) = parts.first() {
-        let _ = std::process::Command::new(prog).args(&parts[1..]).spawn();
-    }
+fn is_gui_app(cmd: &str) -> bool {
+    let binary = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    const GUI_APPS: &[&str] = &[
+        "firefox", "chromium", "chrome", "brave",
+        "nautilus", "thunar", "nemo", "dolphin",
+        "code", "codium", "subl",
+        "gimp", "inkscape", "krita", "blender",
+        "vlc", "mpv", "totem",
+        "libreoffice", "soffice",
+        "slack", "discord", "telegram-desktop",
+        "kitty", "alacritty", "foot",
+        "gedit", "mousepad", "kate",
+        "gnome-terminal", "konsole", "pcmanfm",
+    ];
+    GUI_APPS.contains(&binary)
+}
+
+fn is_tui_app(cmd: &str) -> bool {
+    let binary = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    const TUI_APPS: &[&str] = &[
+        "nano", "vim", "nvim", "vi", "emacs",
+        "htop", "btop", "top",
+        "less", "more", "man",
+        "ranger", "lf", "nnn", "mc", "ncdu",
+        "fzf", "ssh", "mosh",
+        "tmux", "screen",
+        "python", "python3", "ipython",
+        "node", "irb", "ghci",
+        "bash", "zsh", "fish", "sh",
+    ];
+    TUI_APPS.contains(&binary)
+}
+
+fn shell_quote(cmd: &str) -> String {
+    format!("'{}'", cmd.replace('\'', "'\\''"))
 }
