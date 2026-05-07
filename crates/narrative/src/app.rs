@@ -9,6 +9,7 @@ use forkos_shared::sources;
 use iced::keyboard::{self, key};
 use iced::widget::{scrollable, text_input};
 use iced::{Element, Subscription, Task};
+use iced_layershell::to_layer_message;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -38,8 +39,11 @@ pub struct Narrative {
     pub scroll_at_bottom: bool,
     pub active_windows: HashMap<u64, (String, String)>,
     pub active_window_id: Option<u64>,
+    pub bar_open: bool,
+    pub screen_height: u32,
 }
 
+#[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
     PaletteToggle,
@@ -58,6 +62,8 @@ pub enum Message {
     MediaCommand(mpris::MediaCommand),
     MprisUnavailable,
     FeedScrolled(scrollable::Viewport),
+    BarToggle,
+    ScreenGeometry(u32, u32),
     Noop,
 }
 
@@ -95,6 +101,8 @@ impl Narrative {
             scroll_at_bottom: true,
             active_windows: HashMap::new(),
             active_window_id: None,
+            bar_open: false,
+            screen_height: 1080,
         };
 
         let tasks = Task::batch([
@@ -107,6 +115,21 @@ impl Narrative {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::BarToggle => {
+                self.bar_open = !self.bar_open;
+                let new_height = if self.bar_open {
+                    (self.screen_height as f32 * 0.6) as u32
+                } else {
+                    48
+                };
+                Task::done(Message::SizeChange((0, new_height)))
+            }
+
+            Message::ScreenGeometry(_w, h) => {
+                self.screen_height = h;
+                Task::none()
+            }
+
             Message::PaletteToggle => {
                 if self.palette_open {
                     self.palette_open = false;
@@ -175,6 +198,10 @@ impl Narrative {
                     self.palette_open = false;
                     self.palette_query.clear();
                     return text_input::focus(BOTTOM_INPUT_ID.clone());
+                }
+                if self.bar_open {
+                    self.bar_open = false;
+                    return Task::done(Message::SizeChange((0, 48)));
                 }
                 Task::none()
             }
@@ -300,6 +327,9 @@ impl Narrative {
             }
 
             Message::Noop => Task::none(),
+
+            // Variants ajoutées par #[to_layer_message] — interceptées par le runtime
+            _ => Task::none(),
         }
     }
 
@@ -312,6 +342,7 @@ impl Narrative {
             keyboard_subscription(),
             niri_subscription(),
             mpris_subscription(),
+            signal_subscription(),
         ])
     }
 
@@ -352,12 +383,43 @@ fn keyboard_subscription() -> Subscription<Message> {
             return Some(Message::PaletteToggle);
         }
         match key {
+            keyboard::Key::Named(key::Named::F20) => Some(Message::BarToggle),
             keyboard::Key::Named(key::Named::ArrowDown) => Some(Message::PaletteSelectNext),
             keyboard::Key::Named(key::Named::ArrowUp) => Some(Message::PaletteSelectPrevious),
             keyboard::Key::Named(key::Named::Escape) => Some(Message::PaletteCancel),
             _ => None,
         }
     })
+}
+
+// Écoute SIGUSR1 envoyé par le keybind niri pour toggler la barre
+fn signal_subscription() -> Subscription<Message> {
+    use iced::futures::stream;
+
+    Subscription::run_with_id(
+        "sigusr1-toggle",
+        stream::unfold(
+            None::<tokio::signal::unix::Signal>,
+            |state| async move {
+                let mut sig = match state {
+                    Some(s) => s,
+                    None => {
+                        match tokio::signal::unix::signal(
+                            tokio::signal::unix::SignalKind::user_defined1(),
+                        ) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                std::future::pending::<()>().await;
+                                unreachable!()
+                            }
+                        }
+                    }
+                };
+                sig.recv().await;
+                Some((Message::BarToggle, Some(sig)))
+            },
+        ),
+    )
 }
 
 enum NiriState {

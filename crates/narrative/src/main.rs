@@ -5,25 +5,25 @@ mod store;
 mod view;
 
 use app::Narrative;
-use forkos_shared::theme;
+use iced_layershell::build_pattern::{MainSettings, application};
+use iced_layershell::reexport::{Anchor, Layer};
+use iced_layershell::settings::{LayerShellSettings, StartMode};
 
-fn main() -> iced::Result {
+fn main() -> iced_layershell::Result {
     tracing_subscriber::fmt::init();
 
-    iced::application("forkOS", Narrative::update, Narrative::view)
+    application("narrative", Narrative::update, Narrative::view)
         .subscription(Narrative::subscription)
-        .default_font(iced::Font::MONOSPACE)
-        .theme(|_| {
-            iced::Theme::custom(
-                "forkos".to_string(),
-                iced::theme::Palette {
-                    background: theme::BASE,
-                    text: theme::TEXT,
-                    primary: theme::FOAM,
-                    success: theme::PINE,
-                    danger: theme::LOVE,
-                },
-            )
+        .settings(MainSettings {
+            layer_settings: LayerShellSettings {
+                size: Some((0, 48)),
+                anchor: Anchor::Bottom | Anchor::Left | Anchor::Right,
+                exclusive_zone: 48,
+                layer: Layer::Top,
+                start_mode: StartMode::Active,
+                ..Default::default()
+            },
+            ..Default::default()
         })
         .run_with(Narrative::new)
 }

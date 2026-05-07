@@ -2,6 +2,7 @@ mod context_bar;
 mod entry_view;
 mod header;
 mod palette_inline;
+pub mod bar;
 
 use crate::app::{Message, Narrative, BOTTOM_INPUT_ID};
 use forkos_shared::theme;
@@ -12,7 +13,28 @@ use std::sync::LazyLock;
 pub static FEED_SCROLL_ID: LazyLock<scrollable::Id> = LazyLock::new(scrollable::Id::unique);
 
 pub fn render(state: &Narrative) -> Element<'_, Message> {
-    let window = column![
+    if state.bar_open {
+        render_open(state)
+    } else {
+        render_closed(state)
+    }
+}
+
+/// État fermé : juste la barre de 48px
+fn render_closed(state: &Narrative) -> Element<'_, Message> {
+    container(bar::render(state))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::SURFACE)),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// État ouvert : header + fil narratif + palette/input + barre en bas
+fn render_open(state: &Narrative) -> Element<'_, Message> {
+    let body = column![
         header::render(),
         separator(),
         scrollable(entries_column(state))
@@ -21,10 +43,12 @@ pub fn render(state: &Narrative) -> Element<'_, Message> {
             .on_scroll(Message::FeedScrolled),
         separator(),
         bottom_bar(state),
+        separator(),
+        bar::render(state),
     ]
     .height(Length::Fill);
 
-    container(window)
+    container(body)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_| container::Style {
@@ -41,7 +65,6 @@ fn entries_column(state: &Narrative) -> Element<'_, Message> {
         col = col.push(entry_view::render(entry));
     }
 
-    // Zone vide en bas pour aérer
     col = col.push(Space::new(Length::Fill, Length::Fixed(32.0)));
 
     container(col)

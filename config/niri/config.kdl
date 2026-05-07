@@ -53,15 +53,21 @@ animations {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lancement automatique
+// ─────────────────────────────────────────────────────────────────────────────
+
+spawn-at-startup "narrative"
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Raccourcis clavier
 // ─────────────────────────────────────────────────────────────────────────────
 
 binds {
-    // ── Palette forkOS ─────────────────────────────────────────
+    // ── Shell narratif forkOS ──────────────────────────────────
     // F20 est émis par keyd quand Super est tapé seul (sans autre touche)
-    // Voir config/keyd/default.conf
-    F20 { spawn "palette"; }
-    Mod+Space { spawn "palette"; }  // fallback sans keyd
+    // pkill -USR1 envoie SIGUSR1 au binaire narrative pour toggler la barre
+    F20 { spawn "sh" "-c" "pkill -USR1 narrative"; }
+    Mod+Space { spawn "palette"; }  // palette standalone en fallback
 
     // ── Terminal ───────────────────────────────────────────────
     Mod+Return { spawn "foot"; }
@@ -118,7 +124,14 @@ binds {
 // Règles de fenêtres
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Palette — overlay plein écran avec fond transparent
+// Toutes les fenêtres normales : plein écran par défaut
+window-rule {
+    open-maximized true
+    default-column-width { proportion 1.0; }
+    geometry-corner-radius 0
+}
+
+// Palette — overlay centré flottant
 window-rule {
     match title="Palette"
     open-floating true
@@ -127,8 +140,11 @@ window-rule {
     border { off; }
 }
 
-// Toutes les fenêtres — coins arrondis
+// Narrative — layer-shell, pas géré comme fenêtre normale
+// (la règle ci-dessous est un filet de sécurité si niri le voit quand même)
 window-rule {
-    geometry-corner-radius 8
-    clip-to-geometry true
+    match app-id="narrative"
+    focus-ring { off; }
+    border { off; }
+    open-floating true
 }
