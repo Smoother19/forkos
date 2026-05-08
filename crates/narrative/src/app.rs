@@ -44,6 +44,8 @@ pub struct Narrative {
     pub active_windows: HashMap<u64, (String, String)>,
     pub active_window_id: Option<u64>,
     pub bar_open: bool,
+    pub bar_animating: bool,
+    pub bar_current_height: u32,
     pub screen_height: u32,
     // PTY
     pub pty_lines: Vec<pty::PtyLine>,
@@ -67,6 +69,7 @@ pub enum Message {
     MediaCommand(mpris::MediaCommand),
     MprisUnavailable,
     BarToggle,
+    BarAnimationTick,
     ScreenGeometry(u32, u32),
     PtyOutput(String),
     PtyInput(String),
@@ -111,6 +114,8 @@ impl Narrative {
             active_windows: HashMap::new(),
             active_window_id: None,
             bar_open: true,
+            bar_animating: false,
+            bar_current_height: 648, // 60% de 1080
             screen_height: 1080,
             pty_lines: Vec::new(),
             pty_input: String::new(),
@@ -145,15 +150,31 @@ impl Narrative {
         match message {
             Message::BarToggle => {
                 self.bar_open = !self.bar_open;
-                let new_height = if self.bar_open {
+                self.bar_animating = true;
+                text_input::focus(BOTTOM_INPUT_ID.clone())
+            }
+
+            Message::BarAnimationTick => {
+                let target = if self.bar_open {
                     (self.screen_height as f32 * 0.6) as u32
                 } else {
                     48
                 };
-                Task::batch([
-                    Task::done(Message::SizeChange((0, new_height))),
-                    text_input::focus(BOTTOM_INPUT_ID.clone()),
-                ])
+
+                let diff = target as i32 - self.bar_current_height as i32;
+
+                if diff.abs() <= 2 {
+                    self.bar_current_height = target;
+                    self.bar_animating = false;
+                    return Task::done(Message::SizeChange((0, target)));
+                }
+
+                // Ease-out : avance de 20% de la distance restante
+                let step = (diff as f32 * 0.20).round() as i32;
+                let step = if step == 0 { diff.signum() } else { step };
+                self.bar_current_height = (self.bar_current_height as i32 + step).max(0) as u32;
+
+                Task::done(Message::SizeChange((0, self.bar_current_height)))
             }
 
             Message::ScreenGeometry(_w, h) => {
@@ -235,7 +256,7 @@ impl Narrative {
                             .arg(&terminal_cmd)
                             .spawn();
                     } else if is_gui_app(exec) {
-                        let to_send = format!("{} &>/dev/null &\n", exec.trim());
+                        let to_send = build_gui_command(exec);
                         if let Ok(mut guard) = PTY_WRITER.lock() {
                             if let Some(w) = guard.as_mut() {
                                 let _ = w.write_all(to_send.as_bytes());
@@ -256,8 +277,8 @@ impl Narrative {
 
                 let open_task = if !self.bar_open {
                     self.bar_open = true;
-                    let h = (self.screen_height as f32 * 0.6) as u32;
-                    Task::done(Message::SizeChange((0, h)))
+                    self.bar_animating = true;
+                    Task::none()
                 } else {
                     Task::none()
                 };
@@ -312,8 +333,8 @@ impl Narrative {
 
                 let open_task = if !self.bar_open {
                     self.bar_open = true;
-                    let h = (self.screen_height as f32 * 0.6) as u32;
-                    Task::done(Message::SizeChange((0, h)))
+                    self.bar_animating = true;
+                    Task::none()
                 } else {
                     Task::none()
                 };
@@ -344,11 +365,8 @@ impl Narrative {
                         }
                     }
                 } else if is_gui_app(&line) {
-                    // GUI → background détaché, stderr silencé
-                    let to_send = format!(
-                        "{} &>/dev/null &\n",
-                        line.trim_end_matches('&').trim()
-                    );
+                    // GUI → background détaché + focus auto après 800ms
+                    let to_send = build_gui_command(&line);
                     if let Ok(mut guard) = PTY_WRITER.lock() {
                         if let Some(w) = guard.as_mut() {
                             let _ = w.write_all(to_send.as_bytes());
@@ -488,6 +506,7 @@ impl Narrative {
             mpris_subscription(),
             toggle_subscription(),
             pty_subscription(),
+            bar_animation_subscription(self.bar_animating),
         ])
     }
 
@@ -507,6 +526,30 @@ impl Narrative {
             self.entries.push(e);
         }
     }
+}
+
+fn bar_animation_subscription(animating: bool) -> Subscription<Message> {
+    if !animating {
+        return Subscription::none();
+    }
+    iced::time::every(std::time::Duration::from_millis(16))
+        .map(|_| Message::BarAnimationTick)
+}
+
+fn build_gui_command(line: &str) -> String {
+    let clean = line.trim_end_matches('&').trim();
+    let binary = clean
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    // Lance en background puis tente un focus après 800ms
+    format!(
+        "({} &>/dev/null &) && (sleep 0.8 && niri msg action focus-window --app-id {} 2>/dev/null) &\n",
+        clean, binary
+    )
 }
 
 fn keyboard_subscription() -> Subscription<Message> {

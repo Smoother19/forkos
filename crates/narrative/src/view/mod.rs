@@ -18,7 +18,7 @@ pub fn render(state: &Narrative) -> Element<'_, Message> {
 }
 
 /// État fermé : uniquement la barre 48px
-fn render_closed(state: &Narrative) -> Element<'_, Message> {
+pub fn render_closed(state: &Narrative) -> Element<'_, Message> {
     container(bar::render(state))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -30,7 +30,7 @@ fn render_closed(state: &Narrative) -> Element<'_, Message> {
 }
 
 /// État ouvert : header → apps (si présentes) → terminal PTY (ou palette) → barre 48px
-fn render_open(state: &Narrative) -> Element<'_, Message> {
+pub fn render_open(state: &Narrative) -> Element<'_, Message> {
     let mut body = column![];
 
     body = body.push(header::render());
@@ -102,9 +102,17 @@ fn active_apps_section(state: &Narrative) -> Element<'_, Message> {
         .color(theme::MUTED);
 
     container(column![label_row, r.wrap()].spacing(6))
-        .padding(Padding { top: 14.0, right: 24.0, bottom: 14.0, left: 24.0 })
-        .max_width(720)
-        .center_x(Length::Fill)
+        .padding(Padding { top: 12.0, right: 24.0, bottom: 12.0, left: 24.0 })
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(theme::HIGHLIGHT_LOW)),
+            border: Border {
+                color: theme::HIGHLIGHT_MED,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
         .into()
 }
 
